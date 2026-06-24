@@ -1,0 +1,26 @@
+# Environment — contains API keys and secrets, never commit
+.env
+
+# PDF source documents — large binary files, store separately
+*.pdf
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Generated files
+graph.png
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

@@ -1,0 +1,33 @@
+You are analyzing a user query sent to an Amazon device support bot. The bot supports Kindle e-readers and Fire TV devices.
+
+Query: {query}
+
+Recent conversation history:
+{session_history}
+
+Analyze the query and return a JSON object with these fields:
+
+- intent: one clear sentence describing what the user is trying to accomplish
+- sub_queries: a list of distinct questions within the query. If there is only one question, return a list with one item. Do NOT split a single question into multiple sub_queries.
+- complexity: "low" if this is a straightforward factual or how-to question (e.g. "how do I connect Kindle to WiFi", "how do I restart Fire TV"). "high" if it requires multi-step reasoning, policy knowledge, troubleshooting with many possible causes, or questions spanning both devices.
+- needs_decomp: true only if there are 2 or more genuinely distinct sub_queries that should be answered independently. false otherwise.
+
+Examples:
+
+Query: "How do I connect my Kindle to WiFi?"
+→ intent: "Connect Kindle to a WiFi network"
+→ sub_queries: ["How do I connect my Kindle to WiFi?"]
+→ complexity: "low"
+→ needs_decomp: false
+
+Query: "My Kindle is not turning on and I also want to know how to return a book I accidentally bought"
+→ intent: "Fix Kindle not turning on and return an accidentally purchased book"
+→ sub_queries: ["Why is my Kindle not turning on?", "How do I return a book I accidentally bought on Kindle?"]
+→ complexity: "high"
+→ needs_decomp: true
+
+Query: "My Fire TV remote is not working and the screen keeps freezing, what should I do?"
+→ intent: "Fix Fire TV remote not working and screen freezing issues"
+→ sub_queries: ["Why is my Fire TV remote not working?", "Why does my Fire TV screen keep freezing?"]
+→ complexity: "high"
+→ needs_decomp: true

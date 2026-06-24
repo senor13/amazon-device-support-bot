@@ -1,5 +1,4 @@
 from pathlib import Path
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 from langgraph.types import Send
 
@@ -8,16 +7,13 @@ from app.observability.logging import get_logger
 from app.resilience.retry import llm_retry
 from app.config import settings
 
-_GENERATION_PROMPT = Path("prompts/v1/generation.txt").read_text()
+_GENERATION_PROMPT = (Path(__file__).parent.parent.parent / "prompts/v1/generation.txt").read_text()
 
 
 def _get_model(complexity: str):
     if complexity == "low":
-        return ChatGoogleGenerativeAI(model=settings.LOW_COMPLEXITY_MODEL)
-    model_name = settings.HIGH_COMPLEXITY_MODEL
-    if model_name.startswith("gpt"):
-        return ChatOpenAI(model=model_name)
-    return ChatGoogleGenerativeAI(model=model_name)
+        return ChatOpenAI(model=settings.LOW_COMPLEXITY_MODEL)
+    return ChatOpenAI(model=settings.HIGH_COMPLEXITY_MODEL)
 
 
 def _build_prompt(query: str, context: list[str], history: list[dict]) -> str:
@@ -75,7 +71,7 @@ def fan_out_subqueries(state: SupportBotState) -> list[Send]:
     each spawning an independent generate_subquery node.
     """
     return [
-        Send("generate_subquery", {**state, "current_subquery": sq})
+        Send("generate_subquery_node", {**state, "current_subquery": sq})
         for sq in state["sub_queries"]
     ]
 

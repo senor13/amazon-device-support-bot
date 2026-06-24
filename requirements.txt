@@ -14,9 +14,11 @@ slowapi>=0.1.9
 # LangChain / LangGraph
 langchain>=0.2.0
 langchain-core>=0.2.0
-langchain-google-genai>=1.0.0
 langchain-openai>=0.1.0
 langgraph>=0.2.0
+langgraph-checkpoint-postgres>=2.0.0
+psycopg[binary]>=3.1.0
+psycopg-pool>=3.1.0
 
 # LangSmith (observability)
 langsmith>=0.1.0
@@ -27,9 +29,6 @@ presidio-anonymizer>=2.2.0
 spacy>=3.7.0
 # run: python -m spacy download en_core_web_lg
 
-# Safety: attack detection (runs in separate microservice, listed here for local dev)
-rival-ai>=0.1.0
-
 # RAG: retrieval
 pageindex>=0.1.0
 motor>=3.4.0          # async MongoDB driver
@@ -38,15 +37,13 @@ motor>=3.4.0          # async MongoDB driver
 gptcache>=0.1.43
 
 # Output validation
-ragas>=0.2.0
-openai>=1.30.0        # ragas uses openai as judge LLM
+openai>=1.30.0
 
 # Session memory
-asyncpg>=0.29.0       # async postgres driver for LangGraph checkpointer
 
 # Resilience
 tenacity>=8.2.0
-pybreaker>=1.2.0
+aiobreaker>=1.2.0
 
 # HTTP client
 httpx>=0.27.0

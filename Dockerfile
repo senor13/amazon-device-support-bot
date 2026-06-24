@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install system deps for spacy (presidio) and psycopg2
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential curl \
+    build-essential curl libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

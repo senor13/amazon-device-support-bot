@@ -1,5 +1,5 @@
 import httpx
-import pybreaker
+import aiobreaker
 
 from app.graph.state import SupportBotState
 from app.observability.logging import get_logger
@@ -10,25 +10,26 @@ from app.config import settings
 async def cache_store_node(state: SupportBotState) -> dict:
     log = get_logger(state["request_id"], node="cache_store")
 
+    async def _store():
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{settings.GPTCACHE_URL}/put",
+                json={
+                    "prompt": state["raw_query"],
+                    "answer": state["final_response"],
+                },
+                timeout=2.0,
+            )
+
     try:
-        with gptcache_breaker:
-            async with httpx.AsyncClient() as client:
-                await client.post(
-                    f"{settings.GPTCACHE_URL}/put",
-                    json={
-                        "prompt": state["raw_query"],
-                        "answer": state["final_response"],
-                    },
-                    timeout=2.0,
-                )
-    except pybreaker.CircuitBreakerError:
+        await gptcache_breaker.call(_store)
+    except aiobreaker.CircuitBreakerError:
         log.warning("gptcache_circuit_open")
     except Exception as exc:
-        # Non-fatal. A failed cache write just means the next similar query
-        # won't hit the cache — the user gets their response regardless.
+        # Non-fatal — a failed cache write just means the next similar query
+        # won't hit the cache, user still gets their response.
         log.warning("cache_store_failed", error=str(exc))
 
-    # Log the full summary for this request
     log.info(
         "request_complete",
         model_used=state.get("model_used"),

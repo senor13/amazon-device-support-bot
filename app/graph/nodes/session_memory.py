@@ -15,7 +15,7 @@ async def session_memory_node(state: SupportBotState) -> dict:
     max_turns = settings.MAX_SESSION_TURNS
 
     if len(history) > max_turns * 2:
-        # Keep only the most recent N turns (each turn = 2 messages: user + assistant)
+        # Keep only the most recent N messages 
         history = history[-(max_turns * 2):]
         log.info("session_history_trimmed", kept_turns=max_turns)
     else:

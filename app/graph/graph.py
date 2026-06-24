@@ -1,6 +1,7 @@
-import asyncpg
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from psycopg_pool import AsyncConnectionPool
+import psycopg
 
 from app.graph.state import SupportBotState
 from app.graph.nodes.safety_gate import (
@@ -10,7 +11,7 @@ from app.graph.nodes.safety_gate import (
 )
 from app.graph.nodes.query_intelligence import query_intelligence_node
 from app.graph.nodes.session_memory import session_memory_node
-from app.graph.nodes.context_retrieval import context_retrieval_node
+from app.graph.nodes.context_retrieval_vectorless import context_retrieval_node
 from app.graph.nodes.execution import (
     generate_flash_node,
     generate_pro_node,
@@ -31,18 +32,24 @@ def _route_after_safety(state: SupportBotState) -> str:
     return END if state.get("is_attack") else "query_intelligence"
 
 
-async def build_graph(pool: asyncpg.Pool):
+async def build_graph(pool: AsyncConnectionPool):
     """
     Compile and return the LangGraph graph with PostgresSaver checkpointer.
     Call once at app startup.
+
 
     Parallel patterns used:
     1. pii_scrub + attack_detect  — two edges from START, merge at safety_merge
     2. faithfulness + completeness — two edges from execution, merge at validation_merge
     3. generate_subquery fan-out  — dynamic via Send API (number known only at runtime)
     """
+    # setup() needs autocommit to run CREATE INDEX CONCURRENTLY outside a transaction
+    async with await psycopg.AsyncConnection.connect(
+        settings.POSTGRES_DSN, autocommit=True
+    ) as setup_conn:
+        await AsyncPostgresSaver(setup_conn).setup()
+
     checkpointer = AsyncPostgresSaver(pool)
-    await checkpointer.setup()
 
     g = StateGraph(SupportBotState)
 
@@ -104,5 +111,6 @@ async def build_graph(pool: asyncpg.Pool):
 
     g.add_edge("validation_merge", "cache_store")
     g.add_edge("cache_store", END)
+
 
     return g.compile(checkpointer=checkpointer)

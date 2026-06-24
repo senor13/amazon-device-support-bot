@@ -1,7 +1,6 @@
 import uuid
 from contextlib import asynccontextmanager
-
-import asyncpg
+from psycopg_pool import AsyncConnectionPool
 import httpx
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -25,14 +24,29 @@ _pg_pool = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # ── Startup: runs once when the server starts ──────────────────────────────
+    # Everything before yield is setup. We do it here (not at module level)
+    # because these are async operations that need an event loop to run.
     global _graph, _pg_pool
-    _pg_pool = await asyncpg.create_pool(settings.POSTGRES_DSN, min_size=2, max_size=10)
+
+    # Open a pool of Postgres connections (reused across all requests).
+    # min_size=2 keeps 2 connections warm; max_size=10 caps concurrent usage.
+    _pg_pool = AsyncConnectionPool(conninfo=settings.POSTGRES_DSN, min_size=2, max_size=10)
+    await _pg_pool.open()
+
+    # Compile the LangGraph graph once. This connects to Postgres, creates
+    # checkpoint tables, and builds the node/edge structure. Expensive to do
+    # per-request, so we build it once and reuse it globally.
     _graph = await build_graph(_pg_pool)
-    yield
+
+    yield  # ── App runs here, serving all incoming requests ───────────────────
+
+    # ── Shutdown: runs once when the server stops ──────────────────────────────
+    # Cleanly close all Postgres connections so nothing is left hanging.
     await _pg_pool.close()
 
 
-app = FastAPI(title="Apple Support Bot", lifespan=lifespan)
+app = FastAPI(title="Amazon Support Bot", lifespan=lifespan)
 
 # ── Middleware (order matters: added last = runs first) ───────────────────────
 
@@ -43,6 +57,7 @@ app.state.limiter = limiter
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
+
 
 
 # ── Request / response models ─────────────────────────────────────────────────
@@ -110,6 +125,12 @@ async def query_endpoint(body: QueryRequest, request: Request):
     log.info("cache_miss")
 
     # ── LangGraph invocation ──────────────────────────────────────────────────
+    config = {"configurable": {"thread_id": session_id}}
+
+    # Load session history from checkpointer if session already exists
+    previous = await _graph.aget_state(config)
+    previous_history = previous.values.get("session_history", []) if previous else []
+
     initial_state = {
         "raw_query": body.query,
         "session_id": session_id,
@@ -125,7 +146,7 @@ async def query_endpoint(body: QueryRequest, request: Request):
         "needs_decomp": False,
         "prompt_version": "",
         "current_subquery": "",
-        "session_history": [],
+        "session_history": previous_history,
         "retrieved_context": [],
         "sub_responses": [],
         "raw_response": "",
@@ -136,18 +157,23 @@ async def query_endpoint(body: QueryRequest, request: Request):
         "final_response": "",
     }
 
-    config = {"configurable": {"thread_id": session_id}}
-
     try:
         result = await _graph.ainvoke(initial_state, config=config)
     except Exception as exc:
         log.error("graph_invocation_failed", error=str(exc))
         raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
-    # Attack was detected — graph ended early
+    # Attack was detected — graph ended early, don't save to history
     if result.get("is_attack"):
         log.warning("request_rejected_attack", confidence=result.get("attack_confidence"))
         raise HTTPException(status_code=403, detail="Request rejected")
+
+    # Save current turn to checkpointer for next request
+    updated_history = result.get("session_history", []) + [
+        {"role": "user", "content": body.query},
+        {"role": "assistant", "content": result.get("final_response", "")},
+    ]
+    await _graph.aupdate_state(config, {"session_history": updated_history})
 
     log.info("request_success")
 

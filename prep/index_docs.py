@@ -1,12 +1,12 @@
 """
 Offline preparation script.
 
-Run once (or whenever your Apple support docs change) to:
+Run once (or whenever your support docs change) to:
 1. Submit PDFs to PageIndex and get document tree structures
 2. Store the trees in MongoDB for use by the context_retrieval node
 
 Usage:
-    python -m prep.index_docs --pdf path/to/apple-support.pdf --doc-id apple-support
+    python -m prep.index_docs --pdf path/to/device-support.pdf --doc-id device-support
 
 Set PAGEINDEX_API_KEY and MONGODB_URI in your environment or .env file.
 """
@@ -55,9 +55,17 @@ def submit_and_wait(pdf_path: str) -> list:
     raise TimeoutError("PageIndex did not finish processing within 5 minutes")
 
 
-async def main(pdf_path: str, doc_id: str):
-    print(f"Indexing '{pdf_path}' as doc_id='{doc_id}'")
-    tree = submit_and_wait(pdf_path)
+async def main(pdf_path: str, doc_id: str, pi_doc_id: str | None = None):
+    pi_client = PageIndexClient(api_key=PAGEINDEX_API_KEY)
+
+    if pi_doc_id:
+        # Fetch already-processed document — no resubmission needed
+        print(f"Fetching existing PageIndex document: {pi_doc_id}")
+        tree = pi_client.get_tree(pi_doc_id, node_summary=True)["result"]
+        print(f"Tree ready: {len(tree)} top-level nodes")
+    else:
+        print(f"Indexing '{pdf_path}' as doc_id='{doc_id}'")
+        tree = submit_and_wait(pdf_path)
 
     print("\nTree structure:")
     utils.print_tree(tree)
@@ -70,6 +78,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--pdf", required=True, help="Path to the PDF to index")
     parser.add_argument("--doc-id", required=True, help="Identifier for this document")
+    parser.add_argument("--pi-doc-id", help="Existing PageIndex doc ID (skip resubmission)")
     args = parser.parse_args()
 
-    asyncio.run(main(args.pdf, args.doc_id))
+    asyncio.run(main(args.pdf, args.doc_id, args.pi_doc_id))
