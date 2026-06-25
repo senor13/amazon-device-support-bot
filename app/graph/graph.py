@@ -17,6 +17,7 @@ from app.graph.nodes.execution import (
     generate_pro_node,
     generate_subquery_node,
     merge_subqueries_node,
+    out_of_scope_node,
     route_execution,
 )
 from app.graph.nodes.output_validation import (
@@ -36,7 +37,6 @@ async def build_graph(pool: AsyncConnectionPool):
     """
     Compile and return the LangGraph graph with PostgresSaver checkpointer.
     Call once at app startup.
-
 
     Parallel patterns used:
     1. pii_scrub + attack_detect  — two edges from START, merge at safety_merge
@@ -64,6 +64,7 @@ async def build_graph(pool: AsyncConnectionPool):
     g.add_node("generate_pro", generate_pro_node)
     g.add_node("generate_subquery", generate_subquery_node)
     g.add_node("merge_subqueries", merge_subqueries_node)
+    g.add_node("out_of_scope", out_of_scope_node)
     g.add_node("faithfulness", faithfulness_node)
     g.add_node("completeness", completeness_node)
     g.add_node("validation_merge", validation_merge_node)
@@ -84,11 +85,12 @@ async def build_graph(pool: AsyncConnectionPool):
     g.add_edge("query_intelligence", "session_memory")
     g.add_edge("session_memory", "context_retrieval")
 
-    # Execution branch: Flash / Pro / Send fan-out
+    # Execution branch: out_of_scope / Flash / Pro / Send fan-out
     g.add_conditional_edges(
         "context_retrieval",
         route_execution,
         {
+            "out_of_scope": "out_of_scope",
             "generate_flash": "generate_flash",
             "generate_pro": "generate_pro",
             # Send API handles the fan-out case dynamically
@@ -96,7 +98,7 @@ async def build_graph(pool: AsyncConnectionPool):
     )
 
     # All single-query execution paths feed both validation nodes in parallel
-    for exec_node in ("generate_flash", "generate_pro"):
+    for exec_node in ("generate_flash", "generate_pro", "out_of_scope"):
         g.add_edge(exec_node, "faithfulness")
         g.add_edge(exec_node, "completeness")
 
@@ -111,6 +113,5 @@ async def build_graph(pool: AsyncConnectionPool):
 
     g.add_edge("validation_merge", "cache_store")
     g.add_edge("cache_store", END)
-
 
     return g.compile(checkpointer=checkpointer)

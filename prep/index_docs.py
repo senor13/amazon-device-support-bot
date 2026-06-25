@@ -24,18 +24,6 @@ PAGEINDEX_API_KEY = os.environ["PAGEINDEX_API_KEY"]
 MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
 
 
-async def store_tree(doc_id: str, tree: list):
-    client = motor.motor_asyncio.AsyncIOMotorClient(MONGODB_URI)
-    db = client.support_bot
-    await db.document_trees.replace_one(
-        {"doc_id": doc_id},
-        {"doc_id": doc_id, "tree": tree},
-        upsert=True,
-    )
-    print(f"Stored tree for '{doc_id}' in MongoDB.")
-    client.close()
-
-
 def submit_and_wait(pdf_path: str) -> list:
     pi_client = PageIndexClient(api_key=PAGEINDEX_API_KEY)
 
@@ -53,6 +41,18 @@ def submit_and_wait(pdf_path: str) -> list:
         time.sleep(10)
 
     raise TimeoutError("PageIndex did not finish processing within 5 minutes")
+
+
+async def store_tree(doc_id: str, tree: list):
+    client = motor.motor_asyncio.AsyncIOMotorClient(MONGODB_URI)
+    db = client.support_bot
+    await db.document_trees.replace_one(
+        {"doc_id": doc_id},
+        {"doc_id": doc_id, "tree": tree},
+        upsert=True,
+    )
+    print(f"Stored tree for '{doc_id}' in MongoDB.")
+    client.close()
 
 
 async def main(pdf_path: str, doc_id: str, pi_doc_id: str | None = None):
@@ -73,7 +73,8 @@ async def main(pdf_path: str, doc_id: str, pi_doc_id: str | None = None):
     await store_tree(doc_id, tree)
     print("\nDone. Document is ready for retrieval.")
 
-
+#if __name__ == "__main__" — this is a Python convention meaning "only run this block if the script is executed directly". 
+# If another file imported prep.index_docs, this block would be skipped. It's what separates "runnable script" from "importable module".
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--pdf", required=True, help="Path to the PDF to index")

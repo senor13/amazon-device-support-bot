@@ -26,6 +26,7 @@ class SupportBotState(TypedDict):
     needs_decomp: bool
     prompt_version: str
     current_subquery: str  # used per-node in fan-out
+    relevant_docs: list[str]  # ["kindle"], ["firetv"], ["kindle", "firetv"], or [] for out of scope
 
     # --- context ---
     session_history: list[dict]

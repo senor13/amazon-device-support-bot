@@ -18,6 +18,9 @@ env/
 # Generated files
 graph.png
 
+# Persistent logs
+logs/
+
 # macOS
 .DS_Store
 

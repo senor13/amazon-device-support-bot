@@ -15,6 +15,7 @@ class QueryAnalysis(BaseModel):
     sub_queries: list[str]
     complexity: Literal["low", "high"]
     needs_decomp: bool
+    relevant_docs: list[str]  # ["kindle"], ["firetv"], ["kindle", "firetv"], or [] for out of scope
 
 
 _llm = ChatOpenAI(model="gpt-4o-mini").with_structured_output(
@@ -32,7 +33,7 @@ async def query_intelligence_node(state: SupportBotState) -> dict:
 
     history_text = "\n".join(
         f"{turn['role'].upper()}: {turn['content']}"
-        for turn in (state.get("session_history") or [])[-6:]  # last 6 exchanges
+        for turn in (state.get("session_history") or [])[-6:]  # last 6 messages = 3 exchanges
     ) or "None"
 
     prompt = _PROMPT_TEMPLATE.format(
@@ -48,6 +49,7 @@ async def query_intelligence_node(state: SupportBotState) -> dict:
         num_sub_queries=len(result.sub_queries),
         complexity=result.complexity,
         needs_decomp=result.needs_decomp,
+        relevant_docs=result.relevant_docs,
         prompt_version=PROMPT_VERSION,
     )
 
@@ -56,6 +58,7 @@ async def query_intelligence_node(state: SupportBotState) -> dict:
         "sub_queries": result.sub_queries,
         "complexity": result.complexity,
         "needs_decomp": result.needs_decomp,
+        "relevant_docs": result.relevant_docs,
         "prompt_version": PROMPT_VERSION,
     }
 

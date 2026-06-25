@@ -11,6 +11,11 @@ Analyze the query and return a JSON object with these fields:
 - sub_queries: a list of distinct questions within the query. If there is only one question, return a list with one item. Do NOT split a single question into multiple sub_queries.
 - complexity: "low" if this is a straightforward factual or how-to question (e.g. "how do I connect Kindle to WiFi", "how do I restart Fire TV"). "high" if it requires multi-step reasoning, policy knowledge, troubleshooting with many possible causes, or questions spanning both devices.
 - needs_decomp: true only if there are 2 or more genuinely distinct sub_queries that should be answered independently. false otherwise.
+- relevant_docs: list of document IDs to search based on which device the query is about.
+  - Use ["kindle"] if the query is clearly about a Kindle device.
+  - Use ["firetv"] if the query is clearly about a Fire TV device.
+  - Use ["kindle", "firetv"] if the query mentions both devices, or is ambiguous but still Amazon device related (e.g. "how do I connect to WiFi" without mentioning a specific device).
+  - Use [] if the query is completely unrelated to Kindle or Fire TV (e.g. weather, cooking, general knowledge).
 
 Examples:
 
@@ -19,15 +24,32 @@ Query: "How do I connect my Kindle to WiFi?"
 → sub_queries: ["How do I connect my Kindle to WiFi?"]
 → complexity: "low"
 → needs_decomp: false
+→ relevant_docs: ["kindle"]
+
+Query: "How do I connect to WiFi?"
+→ intent: "Connect device to a WiFi network"
+→ sub_queries: ["How do I connect to WiFi?"]
+→ complexity: "low"
+→ needs_decomp: false
+→ relevant_docs: ["kindle", "firetv"]
 
 Query: "My Kindle is not turning on and I also want to know how to return a book I accidentally bought"
 → intent: "Fix Kindle not turning on and return an accidentally purchased book"
 → sub_queries: ["Why is my Kindle not turning on?", "How do I return a book I accidentally bought on Kindle?"]
 → complexity: "high"
 → needs_decomp: true
+→ relevant_docs: ["kindle"]
 
 Query: "My Fire TV remote is not working and the screen keeps freezing, what should I do?"
 → intent: "Fix Fire TV remote not working and screen freezing issues"
 → sub_queries: ["Why is my Fire TV remote not working?", "Why does my Fire TV screen keep freezing?"]
 → complexity: "high"
 → needs_decomp: true
+→ relevant_docs: ["firetv"]
+
+Query: "What is the capital of France?"
+→ intent: "General knowledge question unrelated to Amazon devices"
+→ sub_queries: ["What is the capital of France?"]
+→ complexity: "low"
+→ needs_decomp: false
+→ relevant_docs: []

@@ -63,6 +63,17 @@ async def generate_pro_node(state: SupportBotState) -> dict:
     return {"raw_response": response, "model_used": model_name}
 
 
+# ── Out of scope node ─────────────────────────────────────────────────────────
+
+async def out_of_scope_node(state: SupportBotState) -> dict:
+    log = get_logger(state["request_id"], node="out_of_scope")
+    log.info("out_of_scope_query", query=state["scrubbed_query"])
+    return {
+        "raw_response": "I can only help with questions about Kindle e-readers and Fire TV devices. Your question appears to be outside that scope. Please visit www.amazon.com/help for other Amazon support topics.",
+        "model_used": "none",
+    }
+
+
 # ── Parallel sub-query fan-out ────────────────────────────────────────────────
 
 def fan_out_subqueries(state: SupportBotState) -> list[Send]:
@@ -103,6 +114,9 @@ async def merge_subqueries_node(state: SupportBotState) -> dict:
 # ── Routing ───────────────────────────────────────────────────────────────────
 
 def route_execution(state: SupportBotState):
+    # empty relevant_docs means query is out of scope — skip LLM call entirely
+    if not state.get("relevant_docs"):
+        return "out_of_scope"
     if state["needs_decomp"] and len(state["sub_queries"]) > 1:
         return fan_out_subqueries(state)  # returns list[Send] for dynamic fan-out
     elif state["complexity"] == "low":

@@ -11,7 +11,7 @@ from app.config import settings
 
 _mongo_client = None
 
-#Creates a MongoDB client once and reuses it (singleton pattern). Returns the support_bot database. 
+#Creates a MongoDB client once and reuses it (singleton pattern). Returns the support_bot database.
 #Called every time retrieval runs but only creates the connection on the first call.
 def get_mongo():
     global _mongo_client
@@ -20,7 +20,7 @@ def get_mongo():
             settings.MONGODB_URI,
             serverSelectionTimeoutMS=3000,
         )
-    return _mongo_client.support_bot
+    return _mongo_client.support_bot #db
 
 
 _tree_search_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
@@ -38,7 +38,7 @@ Document tree:
 Reply ONLY with JSON: {{"node_list": ["node_id_1", "node_id_2"]}}
 """
 
-# Takes the full tree from MongoDB and removes the text field from every node recursively. Keeps only node_id, title, summary. 
+# Takes the full tree from MongoDB and removes the text field from every node recursively. Keeps only node_id, title, summary.
 # This slimmed-down tree is what gets sent to the LLM — sending full text of every node would be thousands of tokens and expensive.
 def _strip_text(tree: list) -> list:
     result = []
@@ -49,7 +49,7 @@ def _strip_text(tree: list) -> list:
         result.append(n)
     return result
 
-#Flattens the tree into a simple dictionary: {node_id → full_node}. 
+#Flattens the tree into a simple dictionary: {node_id → full_node}.
 #Makes it easy to look up a node by its ID in O(1) instead of searching the tree. Runs recursively to catch nested child nodes too.
 def _build_node_map(tree: list, node_map: dict | None = None) -> dict:
     if node_map is None:
@@ -73,26 +73,25 @@ async def _search_tree(tree: list, query: str) -> list[dict]:
     #Gets back a list of node_ids
     node_ids = json.loads(result.content)["node_list"]
     # Calls _build_node_map to get a lookup dict
-    node_map = _build_node_map(tree) 
+    node_map = _build_node_map(tree)
     #Returns the full nodes (with text) for the matched IDs
     return [node_map[nid] for nid in node_ids if nid in node_map]
-  
 
 
-_DOC_IDS = ["kindle"]
-
-#Fetches all matching documents from MongoDB (currently just ["kindle"]), then calls _search_tree on each doc in parallel via asyncio.gather. 
+#Fetches matching documents from MongoDB based on relevant_docs from state,
+#then calls _search_tree on each doc in parallel via asyncio.gather.
 #Flattens all results and returns just the text fields as a flat list of strings.
-async def _fetch_and_search(scrubbed_query: str) -> list[str]:
+async def _fetch_and_search(scrubbed_query: str, doc_ids: list[str]) -> list[str]:
     db = get_mongo()
     docs = await db.document_trees.find(
-        {"doc_id": {"$in": _DOC_IDS}}
-    ).to_list(length=len(_DOC_IDS))
+        {"doc_id": {"$in": doc_ids}}
+    ).to_list(length=len(doc_ids))
 
     if not docs:
         return []
-
+    # This creates coroutine objects but doesn't execute them
     search_tasks = [_search_tree(doc["tree"], scrubbed_query) for doc in docs]
+    # This actually runs all of them in parallel
     results = await asyncio.gather(*search_tasks)
     all_nodes = [node for nodes in results for node in nodes]
     return [node.get("text", "") for node in all_nodes if node.get("text")]
@@ -101,12 +100,19 @@ async def _fetch_and_search(scrubbed_query: str) -> list[str]:
 async def context_retrieval_node(state: SupportBotState) -> dict:
     log = get_logger(state["request_id"], node="context_retrieval")
 
+    relevant_docs = state.get("relevant_docs", [])
+
+    # out of scope — skip retrieval entirely
+    if not relevant_docs:
+        log.info("retrieval_skipped", reason="out_of_scope")
+        return {"retrieved_context": []}
+
     try:
-        context = await pageindex_breaker.call(_fetch_and_search, state["scrubbed_query"])
+        context = await pageindex_breaker.call(_fetch_and_search, state["scrubbed_query"], relevant_docs)
         if not context:
-            log.warning("no_document_trees_found")
+            log.warning("no_document_trees_found", doc_ids=relevant_docs)
         else:
-            log.info("retrieval_complete", num_nodes=len(context))
+            log.info("retrieval_complete", num_nodes=len(context), doc_ids=relevant_docs)
         return {"retrieved_context": context}
 
     except aiobreaker.CircuitBreakerError:
