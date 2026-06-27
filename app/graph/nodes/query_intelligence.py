@@ -16,6 +16,7 @@ class QueryAnalysis(BaseModel):
     complexity: Literal["low", "high"]
     needs_decomp: bool
     relevant_docs: list[str]  # ["kindle"], ["firetv"], ["kindle", "firetv"], or [] for out of scope
+    is_cacheable: bool  # true only for factual, context-free questions safe to reuse for any user
 
 
 _llm = ChatOpenAI(model="gpt-4o-mini").with_structured_output(
@@ -50,6 +51,7 @@ async def query_intelligence_node(state: SupportBotState) -> dict:
         complexity=result.complexity,
         needs_decomp=result.needs_decomp,
         relevant_docs=result.relevant_docs,
+        is_cacheable=result.is_cacheable,
         prompt_version=PROMPT_VERSION,
     )
 
@@ -59,6 +61,7 @@ async def query_intelligence_node(state: SupportBotState) -> dict:
         "complexity": result.complexity,
         "needs_decomp": result.needs_decomp,
         "relevant_docs": result.relevant_docs,
+        "is_cacheable": result.is_cacheable,
         "prompt_version": PROMPT_VERSION,
     }
 

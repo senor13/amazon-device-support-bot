@@ -16,6 +16,7 @@ Analyze the query and return a JSON object with these fields:
   - Use ["firetv"] if the query is clearly about a Fire TV device.
   - Use ["kindle", "firetv"] if the query mentions both devices, or is ambiguous but still Amazon device related (e.g. "how do I connect to WiFi" without mentioning a specific device).
   - Use [] if the query is completely unrelated to Kindle or Fire TV (e.g. weather, cooking, general knowledge).
+- is_cacheable: true only if the query is a factual, context-free question whose answer would be the same for any user. false if the query references prior conversation ("what if that doesn't work?", "what about the second option?"), is personal ("hi my name is Sagrika"), is too specific to a user's situation, or is a troubleshooting follow-up.
 
 Examples:
 
@@ -25,6 +26,7 @@ Query: "How do I connect my Kindle to WiFi?"
 → complexity: "low"
 → needs_decomp: false
 → relevant_docs: ["kindle"]
+→ is_cacheable: true
 
 Query: "How do I connect to WiFi?"
 → intent: "Connect device to a WiFi network"
@@ -32,6 +34,23 @@ Query: "How do I connect to WiFi?"
 → complexity: "low"
 → needs_decomp: false
 → relevant_docs: ["kindle", "firetv"]
+→ is_cacheable: true
+
+Query: "What if that doesn't work?"
+→ intent: "Get alternative solution for previously discussed issue"
+→ sub_queries: ["What if that doesn't work?"]
+→ complexity: "high"
+→ needs_decomp: false
+→ relevant_docs: ["kindle", "firetv"]
+→ is_cacheable: false
+
+Query: "Hi my name is Sagrika and I have a Kindle Paperwhite"
+→ intent: "User introduction with device information"
+→ sub_queries: ["Hi my name is Sagrika and I have a Kindle Paperwhite"]
+→ complexity: "low"
+→ needs_decomp: false
+→ relevant_docs: ["kindle"]
+→ is_cacheable: false
 
 Query: "My Kindle is not turning on and I also want to know how to return a book I accidentally bought"
 → intent: "Fix Kindle not turning on and return an accidentally purchased book"
@@ -39,6 +58,7 @@ Query: "My Kindle is not turning on and I also want to know how to return a book
 → complexity: "high"
 → needs_decomp: true
 → relevant_docs: ["kindle"]
+→ is_cacheable: false
 
 Query: "My Fire TV remote is not working and the screen keeps freezing, what should I do?"
 → intent: "Fix Fire TV remote not working and screen freezing issues"
@@ -46,6 +66,7 @@ Query: "My Fire TV remote is not working and the screen keeps freezing, what sho
 → complexity: "high"
 → needs_decomp: true
 → relevant_docs: ["firetv"]
+→ is_cacheable: false
 
 Query: "What is the capital of France?"
 → intent: "General knowledge question unrelated to Amazon devices"
@@ -53,3 +74,4 @@ Query: "What is the capital of France?"
 → complexity: "low"
 → needs_decomp: false
 → relevant_docs: []
+→ is_cacheable: false

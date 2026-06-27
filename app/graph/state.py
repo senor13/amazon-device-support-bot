@@ -27,6 +27,7 @@ class SupportBotState(TypedDict):
     prompt_version: str
     current_subquery: str  # used per-node in fan-out
     relevant_docs: list[str]  # ["kindle"], ["firetv"], ["kindle", "firetv"], or [] for out of scope
+    is_cacheable: bool  # true only for factual, context-free questions safe to reuse for any user
 
     # --- context ---
     session_history: list[dict]
