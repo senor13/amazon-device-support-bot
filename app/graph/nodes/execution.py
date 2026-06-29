@@ -7,7 +7,7 @@ from app.observability.logging import get_logger
 from app.resilience.retry import llm_retry
 from app.config import settings
 
-_GENERATION_PROMPT = (Path(__file__).parent.parent.parent / "prompts/v1/generation.txt").read_text()
+_GENERATION_PROMPT = (Path(__file__).parent.parent.parent / "prompts/v2/generation.txt").read_text()
 
 
 def _get_model(complexity: str):
@@ -114,9 +114,6 @@ async def merge_subqueries_node(state: SupportBotState) -> dict:
 # ── Routing ───────────────────────────────────────────────────────────────────
 
 def route_execution(state: SupportBotState):
-    # empty relevant_docs means query is out of scope — skip LLM call entirely
-    if not state.get("relevant_docs"):
-        return "out_of_scope"
     if state["needs_decomp"] and len(state["sub_queries"]) > 1:
         return fan_out_subqueries(state)  # returns list[Send] for dynamic fan-out
     elif state["complexity"] == "low":

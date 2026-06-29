@@ -7,6 +7,21 @@ import structlog
 _LOG_FILE = Path("/app/logs/app.jsonl")
 
 
+class _TeeWriter:
+    """Writes each log line to both stdout and the JSONL file."""
+
+    def __init__(self, file_path: Path):
+        self._file = file_path.open("a")
+
+    def write(self, message: str):
+        sys.stdout.write(message)
+        self._file.write(message)
+
+    def flush(self):
+        sys.stdout.flush()
+        self._file.flush()
+
+
 def configure_logging():
     # ensure log directory exists
     _LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -19,22 +34,25 @@ def configure_logging():
         structlog.processors.JSONRenderer(),
     ]
 
-    # write to both stdout (visible in docker logs) and a persistent file
-    file_handler = logging.FileHandler(_LOG_FILE)
-    stream_handler = logging.StreamHandler(sys.stdout)
-
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
-    root_logger.addHandler(file_handler)
-    root_logger.addHandler(stream_handler)
+    global _tee_writer
+    _tee_writer = _TeeWriter(_LOG_FILE)
 
     structlog.configure(
         processors=processors,
         wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
         context_class=dict,
-        logger_factory=structlog.WriteLoggerFactory(file=_LOG_FILE.open("a")),
+        logger_factory=structlog.WriteLoggerFactory(file=_tee_writer),
         cache_logger_on_first_use=True,
     )
+
+
+_tee_writer: "_TeeWriter | None" = None
+
+
+def write_separator():
+    """Write a blank line to the log output to visually separate requests."""
+    if _tee_writer:
+        _tee_writer.write("\n")
 
 
 def get_logger(request_id: str, **kwargs):

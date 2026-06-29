@@ -12,7 +12,7 @@ from app.graph.graph import build_graph
 from app.middleware.auth import auth_middleware
 from app.middleware.input_guard import input_guard_middleware
 from app.middleware.rate_limit import limiter
-from app.observability.logging import configure_logging, get_logger
+from app.observability.logging import configure_logging, get_logger, write_separator
 
 configure_logging()
 
@@ -65,6 +65,7 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
 class QueryRequest(BaseModel):
     query: str
     session_id: str | None = None
+    skip_cache: bool = False
 
 
 class QueryResponse(BaseModel):
@@ -106,10 +107,11 @@ async def query_endpoint(body: QueryRequest, request: Request):
     session_id = body.session_id or str(uuid.uuid4())
     log = get_logger(request_id, session_id=session_id, user_id=request.state.user_id)
 
+    write_separator()
     log.info("request_received", query_length=len(body.query))
 
     # ── Cache check (before graph) ────────────────────────────────────────────
-    cached = await check_cache(body.query)
+    cached = None if body.skip_cache else await check_cache(body.query)
     if cached:
         log.info("cache_hit")
         return QueryResponse(

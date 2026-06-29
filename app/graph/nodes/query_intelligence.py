@@ -6,7 +6,7 @@ from app.graph.state import SupportBotState
 from app.observability.logging import get_logger
 from app.resilience.retry import llm_retry
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 _PROMPT_TEMPLATE = (Path(__file__).parent.parent.parent / f"prompts/{PROMPT_VERSION}/query_intelligence.txt").read_text()
 
 

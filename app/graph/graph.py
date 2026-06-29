@@ -17,7 +17,6 @@ from app.graph.nodes.execution import (
     generate_pro_node,
     generate_subquery_node,
     merge_subqueries_node,
-    out_of_scope_node,
     route_execution,
 )
 from app.graph.nodes.output_validation import (
@@ -64,7 +63,6 @@ async def build_graph(pool: AsyncConnectionPool):
     g.add_node("generate_pro", generate_pro_node)
     g.add_node("generate_subquery", generate_subquery_node)
     g.add_node("merge_subqueries", merge_subqueries_node)
-    g.add_node("out_of_scope", out_of_scope_node)
     g.add_node("faithfulness", faithfulness_node)
     g.add_node("completeness", completeness_node)
     g.add_node("validation_merge", validation_merge_node)
@@ -90,7 +88,6 @@ async def build_graph(pool: AsyncConnectionPool):
         "context_retrieval",
         route_execution,
         {
-            "out_of_scope": "out_of_scope",
             "generate_flash": "generate_flash",
             "generate_pro": "generate_pro",
             # Send API handles the fan-out case dynamically
@@ -98,7 +95,7 @@ async def build_graph(pool: AsyncConnectionPool):
     )
 
     # All single-query execution paths feed both validation nodes in parallel
-    for exec_node in ("generate_flash", "generate_pro", "out_of_scope"):
+    for exec_node in ("generate_flash", "generate_pro"):
         g.add_edge(exec_node, "faithfulness")
         g.add_edge(exec_node, "completeness")
 

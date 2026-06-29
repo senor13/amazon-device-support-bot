@@ -16,9 +16,11 @@ import os
 import time
 import requests
 import motor.motor_asyncio
+from dotenv import load_dotenv
 from pageindex import PageIndexClient
 import pageindex.utils as utils
 
+load_dotenv()
 
 PAGEINDEX_API_KEY = os.environ["PAGEINDEX_API_KEY"]
 MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")

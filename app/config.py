@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     MONGODB_URI: str = "mongodb://mongodb:27017"
     POSTGRES_DSN: str = "postgresql://postgres:postgres@postgres:5432/support_bot"
 
-    # Tuning
+    # Tuning 
     MAX_INPUT_CHARS: int = 4000
     MAX_SESSION_TURNS: int = 10
     FAITHFULNESS_THRESHOLD: float = 0.7
