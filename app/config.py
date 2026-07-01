@@ -10,15 +10,16 @@ class Settings(BaseSettings):
     PAGEINDEX_API_KEY: str = ""
 
     # Service URLs
-    GPTCACHE_URL: str = "http://gptcache:8001"
+    GPTCACHE_URL: str = "http://gptcache:8000"
     MONGODB_URI: str = "mongodb://mongodb:27017"
     POSTGRES_DSN: str = "postgresql://postgres:postgres@postgres:5432/support_bot"
 
-    # Tuning 
+    # Tuning
     MAX_INPUT_CHARS: int = 4000
     MAX_SESSION_TURNS: int = 10
     FAITHFULNESS_THRESHOLD: float = 0.7
     COMPLETENESS_THRESHOLD: float = 0.6
+    CACHE_SIMILARITY_THRESHOLD: float = 0.90
 
     # Model selection
     LOW_COMPLEXITY_MODEL: str = "gpt-4o-mini"

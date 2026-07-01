@@ -1,5 +1,15 @@
 # Prompt Changelog
 
+## v2.1
+**Changed:** generation.txt
+- Removed hardcoded fixed string from OOS rule — LLM now responds in its own words
+- Reordered rules: OOS check first, then greeting, then docs-based, then docs-missing
+- Docs-missing rule also uses natural language instead of a fixed string
+
+**Why:** v2 still had a literal string ("I don't have that information...") in the prompt that the LLM copied verbatim. OOS queries also hit the docs-missing rule before reaching the OOS rule because context is always empty for them. Reordering and removing fixed strings lets the LLM respond naturally.
+
+---
+
 ## v2
 **Changed:** generation.txt
 - Restricted answers to docs only — removed "answer from general knowledge" fallback

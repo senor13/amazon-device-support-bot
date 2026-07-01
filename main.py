@@ -85,7 +85,7 @@ async def check_cache(query: str) -> str | None:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{settings.GPTCACHE_URL}/get",
-                json={"prompt": query},
+                json={"prompt": query, "similarity_threshold": settings.CACHE_SIMILARITY_THRESHOLD},
                 timeout=2.0,
             )
             if resp.status_code == 200:
@@ -99,7 +99,6 @@ async def check_cache(query: str) -> str | None:
 
 
 # ── Main endpoint ─────────────────────────────────────────────────────────────
-
 @app.post("/query", response_model=QueryResponse)
 @limiter.limit("30/minute")
 async def query_endpoint(body: QueryRequest, request: Request):

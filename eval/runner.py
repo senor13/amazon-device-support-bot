@@ -1,6 +1,6 @@
 """
 Eval runner — fires all dataset cases against the live API, scores them,
-stores results in Postgres, and prints a summary report.
+and stores results in Postgres.
 
 Usage:
     python -m eval.runner
@@ -12,7 +12,6 @@ import os
 import subprocess
 import time
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -23,9 +22,7 @@ from openai import AsyncOpenAI
 
 load_dotenv()
 
-# ── Config ────────────────────────────────────────────────────────────────────
-
-API_BASE   = "http://localhost:8000"
+API_BASE = "http://localhost:8000"
 JWT_SECRET = os.environ["JWT_SECRET"]
 POSTGRES_DSN = os.environ.get(
     "POSTGRES_DSN", "postgresql://postgres:postgres@localhost:5433/support_bot"
@@ -33,39 +30,20 @@ POSTGRES_DSN = os.environ.get(
 
 DATASET_PATH = Path(__file__).parent / "dataset.json"
 
-FAITHFULNESS_THRESHOLD  = float(os.environ.get("FAITHFULNESS_THRESHOLD", "0.7"))
-COMPLETENESS_THRESHOLD  = float(os.environ.get("COMPLETENESS_THRESHOLD", "0.6"))
-CORRECTNESS_THRESHOLD   = 0.6
+FAITHFULNESS_THRESHOLD = float(os.environ.get("FAITHFULNESS_THRESHOLD", "0.7"))
+COMPLETENESS_THRESHOLD = float(os.environ.get("COMPLETENESS_THRESHOLD", "0.6"))
+CORRECTNESS_THRESHOLD  = 0.6
 
 _openai = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-# ── ANSI colors ───────────────────────────────────────────────────────────────
-
-GREEN  = "\033[92m"
-RED    = "\033[91m"
-YELLOW = "\033[93m"
-BOLD   = "\033[1m"
-RESET  = "\033[0m"
-
-# ── Auth ──────────────────────────────────────────────────────────────────────
 
 def make_token(run_id: str) -> str:
     payload = {"sub": f"eval-{run_id[:8]}", "exp": int(time.time()) + 3600}
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
-# ── API call ──────────────────────────────────────────────────────────────────
 
-async def fire_query(
-    client: httpx.AsyncClient,
-    query: str,
-    session_id: str,
-    token: str,
-) -> tuple[dict | None, int, float]:
-    """Returns (response_body, http_status, latency_ms)."""
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}",
-    }
+async def fire_query(client: httpx.AsyncClient, query: str, session_id: str, token: str) -> tuple[dict | None, int, float]:
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
     start = time.monotonic()
     try:
         resp = await client.post(
@@ -78,42 +56,26 @@ async def fire_query(
         body = resp.json() if "application/json" in resp.headers.get("content-type", "") else None
         return body, resp.status_code, latency_ms
     except Exception:
-        latency_ms = (time.monotonic() - start) * 1000
-        return None, 0, latency_ms
+        return None, 0, (time.monotonic() - start) * 1000
 
-# ── Correctness scorer (LLM-as-judge) ────────────────────────────────────────
 
 _CORRECTNESS_PROMPT = """\
-You are evaluating whether an AI support bot correctly answers a question \
-compared to a reference answer.
+You are evaluating whether an AI support bot correctly answers a question compared to a reference answer.
 
 Question: {query}
+Reference Answer: {expected_answer}
+AI Response: {response}
 
-Reference Answer (key points that must be covered):
-{expected_answer}
-
-AI Response:
-{response}
-
-Score from 0.0 to 1.0:
-- 1.0 = covers all key points from the reference correctly
-- 0.7 = covers most key points but misses minor details
-- 0.5 = partially correct, misses some important points
-- 0.3 = some relevant info but misses key points
-- 0.0 = wrong or completely misses the reference
-
+Score from 0.0 to 1.0 where 1.0 = covers all key points, 0.0 = wrong or completely misses the reference.
 Reply with only a single float and nothing else."""
 
 
 async def score_correctness(query: str, expected_answer: str, response: str) -> float:
-    prompt = _CORRECTNESS_PROMPT.format(
-        query=query,
-        expected_answer=expected_answer,
-        response=response,
-    )
     result = await _openai.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{"role": "user", "content": _CORRECTNESS_PROMPT.format(
+            query=query, expected_answer=expected_answer, response=response
+        )}],
         temperature=0,
     )
     try:
@@ -121,7 +83,6 @@ async def score_correctness(query: str, expected_answer: str, response: str) -> 
     except (ValueError, AttributeError):
         return 0.5
 
-# ── Scoring ───────────────────────────────────────────────────────────────────
 
 async def score_case(case: dict, body: dict | None, status: int) -> dict:
     category        = case["category"]
@@ -129,13 +90,13 @@ async def score_case(case: dict, body: dict | None, status: int) -> dict:
     failure_reason  = None
     passed          = False
 
-    faithfulness  = body.get("faithfulness_score", 0.0)  if body else 0.0
-    completeness  = body.get("completeness_score", 0.0)  if body else 0.0
+    faithfulness  = body.get("faithfulness_score", 0.0) if body else 0.0
+    completeness  = body.get("completeness_score", 0.0) if body else 0.0
     validation_ok = body.get("validation_passed",  False) if body else False
-    model_used    = body.get("model_used",          "")   if body else ""
-    response_text = body.get("response",            "")   if body else ""
+    model_used    = body.get("model_used", "")           if body else ""
+    response_text = body.get("response",   "")           if body else ""
+    request_id    = body.get("request_id", "")           if body else ""
 
-    # Correctness only applies when we have a gold answer and a real response
     correctness = None
     if expected_answer and response_text and status == 200:
         correctness = await score_correctness(case["query"], expected_answer, response_text)
@@ -148,7 +109,7 @@ async def score_case(case: dict, body: dict | None, status: int) -> dict:
     elif category == "out_of_scope":
         deflected = any(
             phrase in response_text.lower()
-            for phrase in ["can only help", "amazon.com/help", "outside", "not able to help", "support guide"]
+            for phrase in ["can only help", "amazon.com/help", "outside", "not able to help", "support guide", "kindle"]
         )
         passed = status == 200 and deflected
         if not passed:
@@ -182,9 +143,9 @@ async def score_case(case: dict, body: dict | None, status: int) -> dict:
         "model_used":         model_used,
         "http_status":        status,
         "failure_reason":     failure_reason,
+        "request_id":         request_id,
     }
 
-# ── Postgres ──────────────────────────────────────────────────────────────────
 
 _CREATE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS eval_runs (
@@ -216,9 +177,11 @@ CREATE TABLE IF NOT EXISTS eval_results (
     http_status        INT,
     latency_ms         FLOAT,
     failure_reason     TEXT,
+    request_id         TEXT,
     created_at         TIMESTAMPTZ DEFAULT NOW()
 );
 """
+
 
 async def store_results(run_id: str, results: list[dict], latencies: dict[str, float]) -> None:
     total  = len(results)
@@ -227,14 +190,11 @@ async def store_results(run_id: str, results: list[dict], latencies: dict[str, f
 
     avg_f = sum(r["faithfulness_score"] for r in scored) / len(scored) if scored else 0.0
     avg_c = sum(r["completeness_score"] for r in scored) / len(scored) if scored else 0.0
-
     correct_scored = [r for r in scored if r["correctness_score"] is not None]
     avg_k = sum(r["correctness_score"] for r in correct_scored) / len(correct_scored) if correct_scored else 0.0
 
     try:
-        git_commit = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"], text=True
-        ).strip()
+        git_commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
     except Exception:
         git_commit = "unknown"
 
@@ -242,8 +202,7 @@ async def store_results(run_id: str, results: list[dict], latencies: dict[str, f
         await conn.execute(_CREATE_SCHEMA)
         await conn.execute(
             """INSERT INTO eval_runs
-               (run_id, total_cases, passed, failed,
-                avg_faithfulness, avg_completeness, avg_correctness, git_commit)
+               (run_id, total_cases, passed, failed, avg_faithfulness, avg_completeness, avg_correctness, git_commit)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
             (run_id, total, passed, total - passed, avg_f, avg_c, avg_k, git_commit),
         )
@@ -252,81 +211,31 @@ async def store_results(run_id: str, results: list[dict], latencies: dict[str, f
                 """INSERT INTO eval_results
                    (run_id, test_case_id, category, query, bot_response, expected_answer,
                     passed, faithfulness_score, completeness_score, correctness_score,
-                    validation_passed, model_used, http_status, latency_ms, failure_reason)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    validation_passed, model_used, http_status, latency_ms, failure_reason, request_id)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (
                     run_id, r["test_case_id"], r["category"], r["query"],
                     r["bot_response"], r["expected_answer"], r["passed"],
                     r["faithfulness_score"], r["completeness_score"], r["correctness_score"],
                     r["validation_passed"], r["model_used"], r["http_status"],
-                    latencies.get(r["test_case_id"], 0.0), r["failure_reason"],
+                    latencies.get(r["test_case_id"], 0.0), r["failure_reason"], r["request_id"],
                 ),
             )
         await conn.commit()
 
-# ── Report : for developemnt phase────────────────────────────────────────────────────────────────────
-
-def _fmt(val: float | None) -> str:
-    return f"{val:.2f}" if val is not None else " n/a"
-
-def print_report(run_id: str, results: list[dict], latencies: dict[str, float]) -> None:
-    total  = len(results)
-    passed = sum(1 for r in results if r["passed"])
-    scored = [r for r in results if r["category"] not in ("attack", "out_of_scope")]
-
-    avg_f = sum(r["faithfulness_score"] for r in scored) / len(scored) if scored else 0.0
-    avg_c = sum(r["completeness_score"] for r in scored) / len(scored) if scored else 0.0
-    correct_scored = [r for r in scored if r["correctness_score"] is not None]
-    avg_k = sum(r["correctness_score"] for r in correct_scored) / len(correct_scored) if correct_scored else None
-
-    pct       = passed / total * 100
-    bar_color = GREEN if pct >= 80 else YELLOW if pct >= 60 else RED
-
-    print(f"\n{BOLD}{'='*70}{RESET}")
-    print(f"{BOLD}EVAL RUN : {run_id[:8]}  |  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}{RESET}")
-    print(f"{'='*70}")
-    print(f"\n{BOLD}OVERALL  : {bar_color}{passed}/{total} passed ({pct:.1f}%){RESET}")
-    print(f"           Faithfulness {avg_f:.2f}  |  Completeness {avg_c:.2f}  |  Correctness {_fmt(avg_k)}\n")
-
-    categories = sorted(set(r["category"] for r in results))
-    print(f"{BOLD}BY CATEGORY{'':>10}pass    faith  comp   correct  lat{RESET}")
-    print(f"  {'-'*66}")
-    for cat in categories:
-        cat_res    = [r for r in results if r["category"] == cat]
-        cat_passed = sum(1 for r in cat_res if r["passed"])
-        cat_pct    = cat_passed / len(cat_res) * 100
-        c_color    = GREEN if cat_pct == 100 else YELLOW if cat_pct >= 60 else RED
-
-        cat_scored = [r for r in cat_res if cat not in ("attack", "out_of_scope")]
-        avg_faith = sum(r["faithfulness_score"] for r in cat_scored) / len(cat_scored) if cat_scored else None
-        avg_comp  = sum(r["completeness_score"] for r in cat_scored) / len(cat_scored) if cat_scored else None
-        cat_corr  = [r for r in cat_scored if r["correctness_score"] is not None]
-        avg_corr  = sum(r["correctness_score"] for r in cat_corr) / len(cat_corr) if cat_corr else None
-        avg_lat   = sum(latencies.get(r["test_case_id"], 0) for r in cat_res) / len(cat_res)
-
-        print(
-            f"  {cat:<16} {c_color}{cat_passed}/{len(cat_res)} ({cat_pct:5.1f}%){RESET}"
-            f"  {_fmt(avg_faith)}  {_fmt(avg_comp)}   {_fmt(avg_corr)}    {avg_lat/1000:.1f}s"
-        )
-
+    print(f"\nRun {run_id[:8]}: {passed}/{total} passed")
+    print(f"Faithfulness {avg_f:.2f} | Completeness {avg_c:.2f} | Correctness {avg_k:.2f}")
     failures = [r for r in results if not r["passed"]]
-    if failures:
-        print(f"\n{BOLD}{RED}FAILURES{RESET}")
-        for r in failures:
-            print(f"  {RED}[FAIL]{RESET} {r['test_case_id']:<10} ({r['category']}): {r['failure_reason']}")
-    else:
-        print(f"\n{GREEN}{BOLD}All {total} cases passed!{RESET}")
+    for r in failures:
+        print(f"  FAIL {r['test_case_id']} ({r['category']}): {r['failure_reason']}")
 
-    print(f"\n{'='*70}\n")
-
-# ── Main ──────────────────────────────────────────────────────────────────────
 
 async def main() -> None:
     dataset = json.loads(DATASET_PATH.read_text())
     run_id  = str(uuid.uuid4())
     token   = make_token(run_id)
 
-    print(f"\n{BOLD}Eval run {run_id[:8]} — {len(dataset)} cases{RESET}\n")
+    print(f"Eval run {run_id[:8]} — {len(dataset)} cases")
 
     results:   list[dict]       = []
     latencies: dict[str, float] = {}
@@ -334,10 +243,8 @@ async def main() -> None:
     async with httpx.AsyncClient() as client:
         for i, case in enumerate(dataset, 1):
             session_id = f"eval-{run_id[:8]}-{case['id']}"
-            label = f"[{i:02d}/{len(dataset)}] {case['id']:<10} ({case['category']})"
-            print(f"  {label}...", end=" ", flush=True)
+            print(f"[{i:02d}/{len(dataset)}] {case['id']} ({case['category']})...", end=" ", flush=True)
 
-            # Fire prior turns first for multi-turn cases
             for prior in case.get("prior_turns", []):
                 await fire_query(client, prior["query"], session_id, token)
 
@@ -347,15 +254,11 @@ async def main() -> None:
             scored = await score_case(case, body, status)
             results.append(scored)
 
-            result_str = f"{GREEN}PASS{RESET}" if scored["passed"] else f"{RED}FAIL{RESET}"
-            corr_str   = f"  corr={scored['correctness_score']:.2f}" if scored["correctness_score"] is not None else ""
-            print(f"{result_str}  ({latency_ms/1000:.1f}s){corr_str}")
+            print("PASS" if scored["passed"] else "FAIL", f"({latency_ms/1000:.1f}s)")
 
             await asyncio.sleep(4)
 
-    print("\nStoring results in Postgres...")
     await store_results(run_id, results, latencies)
-    print_report(run_id, results, latencies)
 
 
 if __name__ == "__main__":

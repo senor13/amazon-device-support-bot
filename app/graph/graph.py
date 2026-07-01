@@ -43,11 +43,14 @@ async def build_graph(pool: AsyncConnectionPool):
     3. generate_subquery fan-out  — dynamic via Send API (number known only at runtime)
     """
     # setup() needs autocommit to run CREATE INDEX CONCURRENTLY outside a transaction
+    #This opens a temporary, single-use connection with autocommit=True and runs AsyncPostgresSaver.setup() — 
+    #which creates the tables LangGraph needs to store conversation checkpoints in Postgres (session history, graph state, etc.).
     async with await psycopg.AsyncConnection.connect(
         settings.POSTGRES_DSN, autocommit=True
     ) as setup_conn:
         await AsyncPostgresSaver(setup_conn).setup()
-
+#creates the checkpointer that the app actually uses for every request — backed by pool (a connection pool, not a single connection). 
+#The pool keeps multiple connections alive and reuses them efficiently across concurrent requests.
     checkpointer = AsyncPostgresSaver(pool)
 
     g = StateGraph(SupportBotState)

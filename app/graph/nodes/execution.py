@@ -63,18 +63,7 @@ async def generate_pro_node(state: SupportBotState) -> dict:
     return {"raw_response": response, "model_used": model_name}
 
 
-# ── Out of scope node ─────────────────────────────────────────────────────────
-
-async def out_of_scope_node(state: SupportBotState) -> dict:
-    log = get_logger(state["request_id"], node="out_of_scope")
-    log.info("out_of_scope_query", query=state["scrubbed_query"])
-    return {
-        "raw_response": "I can only help with questions about Kindle e-readers and Fire TV devices. Your question appears to be outside that scope. Please visit www.amazon.com/help for other Amazon support topics.",
-        "model_used": "none",
-    }
-
-
-# ── Parallel sub-query fan-out ────────────────────────────────────────────────
+# ── Parallel sub-query fan-out ───────────────────────────────────────────────
 
 def fan_out_subqueries(state: SupportBotState) -> list[Send]:
     """
@@ -82,7 +71,7 @@ def fan_out_subqueries(state: SupportBotState) -> list[Send]:
     each spawning an independent generate_subquery node.
     """
     return [
-        Send("generate_subquery_node", {**state, "current_subquery": sq})
+        Send("generate_subquery", {**state, "current_subquery": sq})
         for sq in state["sub_queries"]
     ]
 

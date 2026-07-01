@@ -118,3 +118,7 @@ async def safety_merge_node(state: SupportBotState) -> dict:
 
 #If removed safety merge node and connected both nodes directly to query_intelligence, LangGraph might run query_intelligence
 #as soon as the first one finishes, before the other completes. The merge node prevents that race condition.
+
+#safety_merge is a synchronization barrier. It has two incoming edges (pii_scrub → and attack_detect →),
+#so LangGraph knows to wait until both have deposited their state before running it. 
+# Only then does _route_after_safety decide: reject if attack, continue if clean.
