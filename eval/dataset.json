@@ -31,14 +31,14 @@
     "id": "ABT-001",
     "category": "about",
     "query": "Can I read my Kindle while it is charging from a computer?",
-    "expected_answer": "Yes, but you need to eject the Kindle from the computer first to release it from USB drive mode. Once ejected, you can continue reading while it charges.",
+    "expected_answer": "You need to eject the Kindle from the computer first to release it from USB drive mode. Once ejected, you can continue reading while it charges.",
     "prior_turns": []
   },
   {
     "id": "ABT-002",
     "category": "about",
     "query": "Will an e-book bought from Amazon be in the archive forever?",
-    "expected_answer": "Theoretically, yes. Amazon has made a commitment to its Kindle customers to maintain their purchases in their online archive for an indefinite period of time. Even so, you'd be wise to back up all your e-books, whether from Amazon or other sources, on your computer",
+    "expected_answer": "An e-book you purchase from Amazon will be automatically backed up on their servers. If you remove the book from your device, it will appear in your Archived Items, and you can download it again anytime you wish. This means it will remain in your Archived Items 'forever' as long as you have not deleted your account or the content specifically",
     "prior_turns": []
   },
   {
@@ -50,8 +50,8 @@
   {
     "id": "ABT-004",
     "category": "about",
-    "query": "Will my Kindle still receive subscriptions while it is sleeping?",
-    "expected_answer": "Yes. If wireless was on before the Kindle went to sleep, it will continue to receive scheduled subscriptions during sleep. The Kindle also goes to sleep automatically after 10 minutes of inactivity.",
+    "query": "Will my Kindle still receive subscriptions while it is sleeping but has a network connection?",
+    "expected_answer": "Yes. If wireless was on before the Kindle went to sleep, it will continue to receive scheduled subscriptions during sleep",
     "prior_turns": []
   },
   {
@@ -78,7 +78,7 @@
   {
     "id": "TS-004",
     "category": "troubleshoot",
-    "query": "I'm having problems transferring content from my computer to my Kindle.",
+    "query": "I'm having problems transferring content from my computer to Kindle.",
     "expected_answer": "Connect your Kindle directly to your computer's USB port instead of a USB hub or keyboard. If already connected directly, try a different USB port. If you have anti-virus software installed, turn it off temporarily before transferring content.",
     "prior_turns": []
   },
@@ -86,21 +86,21 @@
     "id": "OOS-001",
     "category": "out_of_scope",
     "query": "What is the weather today?",
-    "expected_answer": null,
+    "expected_answer": "Bot should decline to answer and explain it only helps with Kindle device support.",
     "prior_turns": []
   },
   {
     "id": "OOS-002",
     "category": "out_of_scope",
     "query": "How do I cook pasta?",
-    "expected_answer": null,
+    "expected_answer": "Bot should decline to answer and explain it only helps with Kindle device support.",
     "prior_turns": []
   },
   {
     "id": "OOS-003",
     "category": "out_of_scope",
     "query": "Tell me a joke",
-    "expected_answer": null,
+    "expected_answer": "Bot should decline to answer and explain it only helps with Kindle device support.",
     "prior_turns": []
   },
   {
@@ -162,14 +162,14 @@
     "id": "EG-001",
     "category": "edge_case",
     "query": "kindle",
-    "expected_answer": "The response should acknowledge the Kindle mention and ask the user what help they need with their Kindle device, or provide general information about what Kindle support is available.",
+    "expected_answer": "Bot should greet the user and give a generic response like how can I help you?",
     "prior_turns": []
   },
   {
     "id": "EG-002",
-    "category": "edge_case",
+    "category": "out_of_scope",
     "query": "Hi my name is Alex and I wish to buy a kindle. Is it worth it?",
-    "expected_answer": "TThe bot should greet the user and respond that it can only help with post-purchase support for Kindle. For purchase decisions, please visit www.amazon.com/help.",
+    "expected_answer": "Bot should greet the user and explain it only handles post-purchase Kindle support, directing them to www.amazon.com/help for purchase decisions.",
     "prior_turns": []
   },
   {

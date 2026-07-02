@@ -1,8 +1,8 @@
-import json
 import asyncio
 import aiobreaker
 import motor.motor_asyncio
 from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
 
 from app.graph.state import SupportBotState
 from app.observability.logging import get_logger
@@ -23,7 +23,11 @@ def get_mongo():
     return _mongo_client.support_bot #db
 
 
-_tree_search_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+class TreeSearchResult(BaseModel):
+    node_list: list[str]
+
+#temp = 0 for consistency, same nodeids every time for same query
+_tree_search_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0).with_structured_output(TreeSearchResult)
 
 _TREE_SEARCH_PROMPT = """
 You are given a question and a tree structure of an Amazon device support document.
@@ -34,8 +38,6 @@ Question: {query}
 
 Document tree:
 {tree_json}
-
-Reply ONLY with JSON: {{"node_list": ["node_id_1", "node_id_2"]}}
 """
 
 # Takes the full tree from MongoDB and removes the text field from every node recursively. Keeps only node_id, title, summary.
@@ -62,20 +64,15 @@ def _build_node_map(tree: list, node_map: dict | None = None) -> dict:
 
 
 async def _search_tree(tree: list, query: str) -> list[dict]:
-    #Calls _strip_text to get the lightweight tree
+    import json
     stripped = _strip_text(tree)
-    #Sends it to gpt-4o-mini: "which node_ids are relevant to this query?"
     prompt = _TREE_SEARCH_PROMPT.format(
         query=query,
         tree_json=json.dumps(stripped, indent=2),
     )
-    result = await _tree_search_llm.ainvoke(prompt)
-    #Gets back a list of node_ids
-    node_ids = json.loads(result.content)["node_list"]
-    # Calls _build_node_map to get a lookup dict
+    result: TreeSearchResult = await _tree_search_llm.ainvoke(prompt)
     node_map = _build_node_map(tree)
-    #Returns the full nodes (with text) for the matched IDs
-    return [node_map[nid] for nid in node_ids if nid in node_map]
+    return [node_map[nid] for nid in result.node_list if nid in node_map]
 
 
 #Fetches matching documents from MongoDB based on relevant_docs from state,

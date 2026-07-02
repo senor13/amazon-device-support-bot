@@ -37,7 +37,7 @@ class SupportBotState(TypedDict):
     # annotated with the append reducer so parallel Send nodes can all write
     sub_responses: Annotated[list[str], append_list]
     raw_response: str
-    model_used: str
+    model_used: Annotated[str, lambda a, b: b]  # parallel subquery nodes all write this — last write wins
 
     # --- validation ---
     faithfulness_score: float

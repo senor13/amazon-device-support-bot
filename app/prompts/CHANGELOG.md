@@ -1,5 +1,25 @@
 # Prompt Changelog
 
+## v2.3
+**Changed:** generation.txt
+- Added "determine PRIMARY INTENT first" instruction — LLM now checks intent before matching rules, not just opening words
+- Rule 3 (greeting) now explicitly covers single words or vague messages with no specific question
+- Rules labelled by intent type for clearer LLM reasoning
+
+**Why:** EG-002 ("Hi my name is Alex, is Kindle worth buying?") was triggering the greeting rule before the purchase query rule because the message starts with "Hi". EG-001 ("kindle") was getting a generic response but failing faithfulness because context was retrieved. Primary intent check fixes both.
+
+---
+
+## v2.2
+**Changed:** generation.txt
+- Added rule 0: never repeat PII redaction placeholders (<PERSON>, <EMAIL_ADDRESS>, etc.) in responses
+- Added rule 1: purchase/buying queries → redirect to www.amazon.com/help with "post-purchase support only" message
+- Renumbered existing rules 1-4 → 2-5
+
+**Why:** Bot was echoing <PERSON> placeholder in responses when user's name was scrubbed. Also needed explicit handling for purchase decision queries separate from general OOS.
+
+---
+
 ## v2.1
 **Changed:** generation.txt
 - Removed hardcoded fixed string from OOS rule — LLM now responds in its own words
@@ -27,3 +47,15 @@
 - generation.txt: answers from docs + general knowledge fallback
 - query_intelligence.txt: intent, complexity, routing, cacheability classification
 - completeness_judge.txt: scores whether response covers all sub-queries
+- faithfulness_judge.txt: checks if response claims are supported by context (binary faithful/not faithful)
+
+---
+
+# Prompt Files Reference
+
+| File | Purpose | Used by |
+|---|---|---|
+| generation.txt | Main response generation | execution.py |
+| query_intelligence.txt | Intent, complexity, routing, cacheability | query_intelligence.py |
+| faithfulness_judge.txt | LLM-as-judge: are claims grounded in context? | metrics/faithfulness.py |
+| completeness_judge.txt | LLM-as-judge: did response cover all sub-queries? | metrics/completeness.py |

@@ -15,6 +15,12 @@ from app.resilience.retry import llm_retry
 from app.config import settings
 
 
+# Amazon product/brand names that Presidio's NER model misclassifies as PERSON
+_PRODUCT_ALLOWLIST = {
+    "kindle", "firetv", "fire tv", "alexa", "echo", "amazon",
+    "paperwhite", "oasis", "scribe",
+}
+
 _analyzer = AnalyzerEngine()
 _anonymizer = AnonymizerEngine()
 
@@ -54,8 +60,13 @@ _attack_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0).with_structured_out
 
 def _scrub_pii_sync(text: str) -> tuple[str, list[str]]:
     results = _analyzer.analyze(text=text, language="en")
+    # Filter out product/brand names misclassified as PERSON by spaCy NER
+    results = [
+        r for r in results
+        if not (r.entity_type == "PERSON" and text[r.start:r.end].lower() in _PRODUCT_ALLOWLIST)
+    ]
     anonymized = _anonymizer.anonymize(text=text, analyzer_results=results)
-    found_types = list({r.entity_type for r in results}) # {} set removes duplicates
+    found_types = list({r.entity_type for r in results})
     return anonymized.text, found_types
 
 

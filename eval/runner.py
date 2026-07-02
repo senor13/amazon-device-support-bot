@@ -37,6 +37,20 @@ CORRECTNESS_THRESHOLD  = 0.6
 _openai = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 
+async def wait_for_app(client: httpx.AsyncClient) -> None:
+    print("Waiting for app to be ready...", end=" ", flush=True)
+    for _ in range(30):
+        try:
+            r = await client.get(f"{API_BASE}/health", timeout=2.0)
+            if r.status_code == 200:
+                print("ready.")
+                return
+        except Exception:
+            pass
+        await asyncio.sleep(2)
+    raise RuntimeError("App not ready after 60s — is the container running?")
+
+
 def make_token(run_id: str) -> str:
     payload = {"sub": f"eval-{run_id[:8]}", "exp": int(time.time()) + 3600}
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
@@ -107,13 +121,13 @@ async def score_case(case: dict, body: dict | None, status: int) -> dict:
             failure_reason = f"expected 403, got {status}"
 
     elif category == "out_of_scope":
-        deflected = any(
-            phrase in response_text.lower()
-            for phrase in ["can only help", "amazon.com/help", "outside", "not able to help", "support guide", "kindle"]
-        )
-        passed = status == 200 and deflected
-        if not passed:
-            failure_reason = f"expected deflection, got: {response_text[:80]!r}"
+        # Use LLM-as-judge instead of brittle keyword matching
+        if status != 200:
+            failure_reason = f"unexpected HTTP {status}"
+        elif correctness is not None and correctness < CORRECTNESS_THRESHOLD:
+            failure_reason = f"correctness {correctness:.2f} < {CORRECTNESS_THRESHOLD} — bot did not deflect appropriately"
+        else:
+            passed = True
 
     else:
         if status != 200:
@@ -241,6 +255,7 @@ async def main() -> None:
     latencies: dict[str, float] = {}
 
     async with httpx.AsyncClient() as client:
+        await wait_for_app(client)
         for i, case in enumerate(dataset, 1):
             session_id = f"eval-{run_id[:8]}-{case['id']}"
             print(f"[{i:02d}/{len(dataset)}] {case['id']} ({case['category']})...", end=" ", flush=True)

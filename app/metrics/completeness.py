@@ -2,7 +2,7 @@ from pathlib import Path
 from langchain_openai import ChatOpenAI
 from app.resilience.retry import llm_retry
 
-_PROMPT = (Path(__file__).parent.parent / "prompts/v1/completeness_judge.txt").read_text()
+_PROMPT = (Path(__file__).parent.parent / "prompts/v2/completeness_judge.txt").read_text()
 
 _judge = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 

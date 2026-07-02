@@ -16,6 +16,7 @@ Analyze the query and return a JSON object with these fields:
   - Use ["firetv"] if the query is clearly about a Fire TV device.
   - Use ["kindle", "firetv"] if the query mentions both devices, or is ambiguous but still Amazon device related (e.g. "how do I connect to WiFi" without mentioning a specific device).
   - Use [] if the query is completely unrelated to Kindle or Fire TV (e.g. weather, cooking, general knowledge).
+  - Use [] if the query is a greeting, introduction, or too vague to retrieve anything useful (e.g. "hi", "hello", "kindle", "help me"). No docs are needed when there is no specific question to answer.
 - is_cacheable: true only if the query is a factual, context-free question whose answer would be the same for any user. false if the query references prior conversation ("what if that doesn't work?", "what about the second option?"), is personal ("hi my name is Sagrika"), is too specific to a user's situation, or is a troubleshooting follow-up.
 
 Examples:
@@ -66,6 +67,14 @@ Query: "My Fire TV remote is not working and the screen keeps freezing, what sho
 → complexity: "high"
 → needs_decomp: true
 → relevant_docs: ["firetv"]
+→ is_cacheable: false
+
+Query: "kindle"
+→ intent: "Vague greeting or opening message with no specific question"
+→ sub_queries: ["kindle"]
+→ complexity: "low"
+→ needs_decomp: false
+→ relevant_docs: []
 → is_cacheable: false
 
 Query: "What is the capital of France?"
