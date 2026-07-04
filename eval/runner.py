@@ -105,12 +105,13 @@ async def score_case(case: dict, body: dict | None, status: int) -> dict:
     failure_reason  = None
     passed          = False
 
-    faithfulness  = body.get("faithfulness_score", 0.0) if body else 0.0
-    completeness  = body.get("completeness_score", 0.0) if body else 0.0
-    validation_ok = body.get("validation_passed",  False) if body else False
-    model_used    = body.get("model_used", "")           if body else ""
-    response_text = body.get("response",   "")           if body else ""
-    request_id    = body.get("request_id", "")           if body else ""
+    faithfulness   = body.get("faithfulness_score",  0.0)  if body else 0.0
+    completeness   = body.get("completeness_score",  0.0)  if body else 0.0
+    rag_precision  = body.get("rag_precision_score", 0.0)  if body else 0.0
+    validation_ok  = body.get("validation_passed",   False) if body else False
+    model_used     = body.get("model_used", "")             if body else ""
+    response_text  = body.get("response",   "")             if body else ""
+    request_id     = body.get("request_id", "")             if body else ""
 
     correctness = None
     if expected_answer and response_text and status == 200:
@@ -145,20 +146,21 @@ async def score_case(case: dict, body: dict | None, status: int) -> dict:
             passed = True
 
     return {
-        "test_case_id":       case["id"],
-        "category":           category,
-        "query":              case["query"],
-        "bot_response":       response_text,
-        "expected_answer":    expected_answer,
-        "passed":             passed,
-        "faithfulness_score": faithfulness,
-        "completeness_score": completeness,
-        "correctness_score":  correctness,
-        "validation_passed":  validation_ok,
-        "model_used":         model_used,
-        "http_status":        status,
-        "failure_reason":     failure_reason,
-        "request_id":         request_id,
+        "test_case_id":        case["id"],
+        "category":            category,
+        "query":               case["query"],
+        "bot_response":        response_text,
+        "expected_answer":     expected_answer,
+        "passed":              passed,
+        "faithfulness_score":  faithfulness,
+        "completeness_score":  completeness,
+        "rag_precision_score": rag_precision,
+        "correctness_score":   correctness,
+        "validation_passed":   validation_ok,
+        "model_used":          model_used,
+        "http_status":         status,
+        "failure_reason":      failure_reason,
+        "request_id":          request_id,
     }
 
 
@@ -169,11 +171,12 @@ CREATE TABLE IF NOT EXISTS eval_runs (
     total_cases      INT,
     passed           INT,
     failed           INT,
-    avg_faithfulness FLOAT,
-    avg_completeness FLOAT,
-    avg_correctness  FLOAT,
-    git_commit       TEXT,
-    notes            TEXT
+    avg_faithfulness  FLOAT,
+    avg_completeness  FLOAT,
+    avg_correctness   FLOAT,
+    avg_rag_precision FLOAT,
+    git_commit        TEXT,
+    notes             TEXT
 );
 
 CREATE TABLE IF NOT EXISTS eval_results (
@@ -185,9 +188,10 @@ CREATE TABLE IF NOT EXISTS eval_results (
     bot_response       TEXT,
     expected_answer    TEXT,
     passed             BOOLEAN,
-    faithfulness_score FLOAT,
-    completeness_score FLOAT,
-    correctness_score  FLOAT,
+    faithfulness_score  FLOAT,
+    completeness_score  FLOAT,
+    rag_precision_score FLOAT,
+    correctness_score   FLOAT,
     validation_passed  BOOLEAN,
     model_used         TEXT,
     http_status        INT,
@@ -204,8 +208,9 @@ async def store_results(run_id: str, results: list[dict], latencies: dict[str, f
     passed = sum(1 for r in results if r["passed"])
     scored = [r for r in results if r["category"] not in ("attack", "out_of_scope")]
 
-    avg_f = sum(r["faithfulness_score"] for r in scored) / len(scored) if scored else 0.0
-    avg_c = sum(r["completeness_score"] for r in scored) / len(scored) if scored else 0.0
+    avg_f = sum(r["faithfulness_score"]  for r in scored) / len(scored) if scored else 0.0
+    avg_c = sum(r["completeness_score"]  for r in scored) / len(scored) if scored else 0.0
+    avg_p = sum(r["rag_precision_score"] for r in scored) / len(scored) if scored else 0.0
     correct_scored = [r for r in scored if r["correctness_score"] is not None]
     avg_k = sum(r["correctness_score"] for r in correct_scored) / len(correct_scored) if correct_scored else 0.0
 
@@ -218,21 +223,21 @@ async def store_results(run_id: str, results: list[dict], latencies: dict[str, f
         await conn.execute(_CREATE_SCHEMA)
         await conn.execute(
             """INSERT INTO eval_runs
-               (run_id, total_cases, passed, failed, avg_faithfulness, avg_completeness, avg_correctness, git_commit, notes)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-            (run_id, total, passed, total - passed, avg_f, avg_c, avg_k, git_commit, EVAL_NOTES),
+               (run_id, total_cases, passed, failed, avg_faithfulness, avg_completeness, avg_correctness, avg_rag_precision, git_commit, notes)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            (run_id, total, passed, total - passed, avg_f, avg_c, avg_k, avg_p, git_commit, EVAL_NOTES),
         )
         for r in results:
             await conn.execute(
                 """INSERT INTO eval_results
                    (run_id, test_case_id, category, query, bot_response, expected_answer,
-                    passed, faithfulness_score, completeness_score, correctness_score,
+                    passed, faithfulness_score, completeness_score, rag_precision_score, correctness_score,
                     validation_passed, model_used, http_status, latency_ms, failure_reason, request_id)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (
                     run_id, r["test_case_id"], r["category"], r["query"],
                     r["bot_response"], r["expected_answer"], r["passed"],
-                    r["faithfulness_score"], r["completeness_score"], r["correctness_score"],
+                    r["faithfulness_score"], r["completeness_score"], r["rag_precision_score"], r["correctness_score"],
                     r["validation_passed"], r["model_used"], r["http_status"],
                     latencies.get(r["test_case_id"], 0.0), r["failure_reason"], r["request_id"],
                 ),
@@ -240,7 +245,7 @@ async def store_results(run_id: str, results: list[dict], latencies: dict[str, f
         await conn.commit()
 
     print(f"\nRun {run_id[:8]}: {passed}/{total} passed")
-    print(f"Faithfulness {avg_f:.2f} | Completeness {avg_c:.2f} | Correctness {avg_k:.2f}")
+    print(f"Faithfulness {avg_f:.2f} | Completeness {avg_c:.2f} | Correctness {avg_k:.2f} | RAG Precision {avg_p:.2f}")
     if EVAL_NOTES:
         print(f"Notes: {EVAL_NOTES}")
     failures = [r for r in results if not r["passed"]]

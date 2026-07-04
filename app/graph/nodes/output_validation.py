@@ -9,6 +9,7 @@ Both fan out from the execution node(s) and converge at validation_merge.
 from app.graph.state import SupportBotState
 from app.metrics.faithfulness import score_faithfulness
 from app.metrics.completeness import score_completeness
+from app.metrics.rag_precision import score_rag_precision
 from app.observability.logging import get_logger
 from app.config import settings
 
@@ -46,7 +47,31 @@ async def completeness_node(state: SupportBotState) -> dict:
     return {"completeness_score": score}
 
 
-# ── Node C: Validation merge ──────────────────────────────────────────────────
+# ── Node C: RAG Precision (LLM-as-judge) ─────────────────────────────────────
+
+async def rag_precision_node(state: SupportBotState) -> dict:
+    log = get_logger(state["request_id"], node="rag_precision")
+    context = state.get("retrieved_context", [])
+
+    if not context:
+        log.info("rag_precision_skipped", reason="no_context")
+        return {"rag_precision_score": 1.0}
+
+    try:
+        score = await score_rag_precision(
+            query=state["scrubbed_query"],
+            context=context,
+            response=state["raw_response"],
+        )
+    except Exception as exc:
+        log.warning("rag_precision_failed", error=str(exc))
+        score = 1.0
+
+    log.info("rag_precision_complete", score=round(score, 3))
+    return {"rag_precision_score": score}
+
+
+# ── Node D: Validation merge ──────────────────────────────────────────────────
 
 async def validation_merge_node(state: SupportBotState) -> dict:
     log = get_logger(state["request_id"], node="validation_merge")

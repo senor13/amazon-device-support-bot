@@ -42,6 +42,7 @@ class SupportBotState(TypedDict):
     # --- validation ---
     faithfulness_score: float
     completeness_score: float
+    rag_precision_score: float
     validation_passed: bool
 
     # --- output ---

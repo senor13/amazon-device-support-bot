@@ -76,6 +76,7 @@ class QueryResponse(BaseModel):
     request_id: str
     faithfulness_score: float
     completeness_score: float
+    rag_precision_score: float
     validation_passed: bool
     model_used: str
 
@@ -129,6 +130,7 @@ def _build_initial_state(body: QueryRequest, session_id: str, request_id: str, p
         "model_used": "",
         "faithfulness_score": 0.0,
         "completeness_score": 0.0,
+        "rag_precision_score": 0.0,
         "validation_passed": False,
         "final_response": "",
     }
@@ -152,7 +154,7 @@ async def query_endpoint(body: QueryRequest, request: Request):
         log.info("cache_hit")
         cache_resp = QueryResponse(
             response=cached, session_id=session_id, request_id=request_id,
-            faithfulness_score=1.0, completeness_score=1.0,
+            faithfulness_score=1.0, completeness_score=1.0, rag_precision_score=1.0,
             validation_passed=True, model_used="cache",
         )
         if body.stream:
@@ -214,6 +216,7 @@ async def query_endpoint(body: QueryRequest, request: Request):
                 request_id=request_id,
                 faithfulness_score=f_score,
                 completeness_score=c_score,
+                rag_precision_score=result.get("rag_precision_score", 0.0),
                 validation_passed=result.get("validation_passed", False),
                 model_used=result.get("model_used", "unknown"),
             )
@@ -245,6 +248,7 @@ async def query_endpoint(body: QueryRequest, request: Request):
         request_id=request_id,
         faithfulness_score=result.get("faithfulness_score", 0.0),
         completeness_score=result.get("completeness_score", 0.0),
+        rag_precision_score=result.get("rag_precision_score", 0.0),
         validation_passed=result.get("validation_passed", False),
         model_used=result.get("model_used", "unknown"),
     )

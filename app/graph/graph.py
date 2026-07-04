@@ -22,6 +22,7 @@ from app.graph.nodes.execution import (
 from app.graph.nodes.output_validation import (
     faithfulness_node,
     completeness_node,
+    rag_precision_node,
     validation_merge_node,
 )
 from app.graph.nodes.cache_store import cache_store_node
@@ -68,6 +69,7 @@ async def build_graph(pool: AsyncConnectionPool):
     g.add_node("merge_subqueries", merge_subqueries_node)
     g.add_node("faithfulness", faithfulness_node)
     g.add_node("completeness", completeness_node)
+    g.add_node("rag_precision", rag_precision_node)
     g.add_node("validation_merge", validation_merge_node)
     g.add_node("cache_store", cache_store_node)
 
@@ -97,19 +99,22 @@ async def build_graph(pool: AsyncConnectionPool):
         },
     )
 
-    # All single-query execution paths feed both validation nodes in parallel
+    # All single-query execution paths feed all three validation nodes in parallel
     for exec_node in ("generate_flash", "generate_pro"):
         g.add_edge(exec_node, "faithfulness")
         g.add_edge(exec_node, "completeness")
+        g.add_edge(exec_node, "rag_precision")
 
     # Sub-query fan-out merges first, then splits into validation
     g.add_edge("generate_subquery", "merge_subqueries")
     g.add_edge("merge_subqueries", "faithfulness")
     g.add_edge("merge_subqueries", "completeness")
+    g.add_edge("merge_subqueries", "rag_precision")
 
-    # Both validation nodes converge at validation_merge
+    # All three validation nodes converge at validation_merge
     g.add_edge("faithfulness", "validation_merge")
     g.add_edge("completeness", "validation_merge")
+    g.add_edge("rag_precision", "validation_merge")
 
     g.add_edge("validation_merge", "cache_store")
     g.add_edge("cache_store", END)
