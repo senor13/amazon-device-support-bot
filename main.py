@@ -1,3 +1,4 @@
+import json
 import uuid
 from contextlib import asynccontextmanager
 from psycopg_pool import AsyncConnectionPool
@@ -66,6 +67,7 @@ class QueryRequest(BaseModel):
     query: str
     session_id: str | None = None
     skip_cache: bool = False
+    stream: bool = False
 
 
 class QueryResponse(BaseModel):
@@ -98,45 +100,16 @@ async def check_cache(query: str) -> str | None:
     return None
 
 
-# ── Main endpoint ─────────────────────────────────────────────────────────────
-@app.post("/query", response_model=QueryResponse)
-@limiter.limit("30/minute")
-async def query_endpoint(body: QueryRequest, request: Request):
-    request_id = str(uuid.uuid4())
-    session_id = body.session_id or str(uuid.uuid4())
-    log = get_logger(request_id, session_id=session_id, user_id=request.state.user_id)
+_STREAM_NODES = {"generate_flash", "generate_pro", "generate_subquery"}
+_FAITHFULNESS_THRESHOLD = 0.7
+_COMPLETENESS_THRESHOLD = 0.6
 
-    write_separator()
-    log.info("request_received", query_length=len(body.query))
 
-    # ── Cache check (before graph) ────────────────────────────────────────────
-    cached = None if body.skip_cache else await check_cache(body.query)
-    if cached:
-        log.info("cache_hit")
-        return QueryResponse(
-            response=cached,
-            session_id=session_id,
-            request_id=request_id,
-            faithfulness_score=1.0,
-            completeness_score=1.0,
-            validation_passed=True,
-            model_used="cache",
-        )
-
-    log.info("cache_miss")
-
-    # ── LangGraph invocation ──────────────────────────────────────────────────
-    config = {"configurable": {"thread_id": session_id}}
-
-    # Load session history from checkpointer if session already exists
-    previous = await _graph.aget_state(config)
-    previous_history = previous.values.get("session_history", []) if previous else []
-
-    initial_state = {
+def _build_initial_state(body: QueryRequest, session_id: str, request_id: str, previous_history: list) -> dict:
+    return {
         "raw_query": body.query,
         "session_id": session_id,
         "request_id": request_id,
-        # remaining fields populated by nodes
         "scrubbed_query": "",
         "pii_found": [],
         "is_attack": False,
@@ -160,18 +133,105 @@ async def query_endpoint(body: QueryRequest, request: Request):
         "final_response": "",
     }
 
+
+# ── Main endpoint ─────────────────────────────────────────────────────────────
+
+@app.post("/query")
+@limiter.limit("30/minute")
+async def query_endpoint(body: QueryRequest, request: Request):
+    request_id = str(uuid.uuid4())
+    session_id = body.session_id or str(uuid.uuid4())
+    log = get_logger(request_id, session_id=session_id, user_id=request.state.user_id)
+
+    write_separator()
+    log.info("request_received", query_length=len(body.query), streaming=body.stream)
+
+    # ── Cache check ───────────────────────────────────────────────────────────
+    cached = None if body.skip_cache else await check_cache(body.query)
+    if cached:
+        log.info("cache_hit")
+        cache_resp = QueryResponse(
+            response=cached, session_id=session_id, request_id=request_id,
+            faithfulness_score=1.0, completeness_score=1.0,
+            validation_passed=True, model_used="cache",
+        )
+        if body.stream:
+            async def _cached_stream():
+                yield cached
+                yield f"\n\n[METADATA]{json.dumps(cache_resp.model_dump())}"
+            return StreamingResponse(_cached_stream(), media_type="text/plain")
+        return cache_resp
+
+    log.info("cache_miss")
+
+    config = {"configurable": {"thread_id": session_id}}
+    previous = await _graph.aget_state(config)
+    previous_history = previous.values.get("session_history", []) if previous else []
+    initial_state = _build_initial_state(body, session_id, request_id, previous_history)
+
+    # ── Streaming path ────────────────────────────────────────────────────────
+    if body.stream:
+        async def _stream():
+            try:
+                async for event in _graph.astream_events(initial_state, config=config, version="v2"):
+                    if event["event"] == "on_chat_model_stream":
+                        node = event.get("metadata", {}).get("langgraph_node", "")
+                        if node in _STREAM_NODES:
+                            if content := event["data"]["chunk"].content:
+                                yield content
+            except Exception as exc:
+                log.error("stream_failed", error=str(exc))
+                yield "\n\n[ERROR]Service temporarily unavailable"
+                return
+
+            # Graph fully done — fetch final validated state
+            final = await _graph.aget_state(config)
+            result = final.values if final else {}
+
+            if result.get("is_attack"):
+                log.warning("stream_rejected_attack")
+                yield "\n\n[ERROR]403"
+                return
+
+            # Escalate if validation scores are low
+            f_score = result.get("faithfulness_score", 0.0)
+            c_score = result.get("completeness_score", 0.0)
+            if f_score < _FAITHFULNESS_THRESHOLD:
+                log.warning("low_faithfulness_alert", score=f_score, request_id=request_id)
+            if c_score < _COMPLETENESS_THRESHOLD:
+                log.warning("low_completeness_alert", score=c_score, request_id=request_id)
+
+            updated_history = result.get("session_history", []) + [
+                {"role": "user", "content": body.query},
+                {"role": "assistant", "content": result.get("final_response", "")},
+            ]
+            await _graph.aupdate_state(config, {"session_history": updated_history})
+
+            log.info("stream_complete", faithfulness=f_score, completeness=c_score)
+            stream_resp = QueryResponse(
+                response=result.get("final_response", ""),
+                session_id=session_id,
+                request_id=request_id,
+                faithfulness_score=f_score,
+                completeness_score=c_score,
+                validation_passed=result.get("validation_passed", False),
+                model_used=result.get("model_used", "unknown"),
+            )
+            yield f"\n\n[METADATA]{json.dumps(stream_resp.model_dump())}"
+
+        return StreamingResponse(_stream(), media_type="text/plain")
+
+    # ── Non-streaming path ────────────────────────────────────────────────────
     try:
         result = await _graph.ainvoke(initial_state, config=config)
     except Exception as exc:
         log.error("graph_invocation_failed", error=str(exc))
         raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
-    # Attack was detected — graph ended early, don't save to history
     if result.get("is_attack"):
         log.warning("request_rejected_attack", confidence=result.get("attack_confidence"))
         raise HTTPException(status_code=403, detail="Request rejected")
 
-    # Save current turn to checkpointer for next request
     updated_history = result.get("session_history", []) + [
         {"role": "user", "content": body.query},
         {"role": "assistant", "content": result.get("final_response", "")},
@@ -179,7 +239,6 @@ async def query_endpoint(body: QueryRequest, request: Request):
     await _graph.aupdate_state(config, {"session_history": updated_history})
 
     log.info("request_success")
-
     return QueryResponse(
         response=result["final_response"],
         session_id=session_id,
