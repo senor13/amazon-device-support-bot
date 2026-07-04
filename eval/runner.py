@@ -233,7 +233,7 @@ async def store_results(run_id: str, results: list[dict], latencies: dict[str, f
                    (run_id, test_case_id, category, query, bot_response, expected_answer,
                     passed, faithfulness_score, completeness_score, rag_precision_score, correctness_score,
                     validation_passed, model_used, http_status, latency_ms, failure_reason, request_id)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (
                     run_id, r["test_case_id"], r["category"], r["query"],
                     r["bot_response"], r["expected_answer"], r["passed"],
