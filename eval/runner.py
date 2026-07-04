@@ -33,6 +33,7 @@ DATASET_PATH = Path(__file__).parent / "dataset.json"
 FAITHFULNESS_THRESHOLD = float(os.environ.get("FAITHFULNESS_THRESHOLD", "0.7"))
 COMPLETENESS_THRESHOLD = float(os.environ.get("COMPLETENESS_THRESHOLD", "0.6"))
 CORRECTNESS_THRESHOLD  = 0.6
+EVAL_NOTES             = os.environ.get("EVAL_NOTES", "")
 
 _openai = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
@@ -171,7 +172,8 @@ CREATE TABLE IF NOT EXISTS eval_runs (
     avg_faithfulness FLOAT,
     avg_completeness FLOAT,
     avg_correctness  FLOAT,
-    git_commit       TEXT
+    git_commit       TEXT,
+    notes            TEXT
 );
 
 CREATE TABLE IF NOT EXISTS eval_results (
@@ -216,9 +218,9 @@ async def store_results(run_id: str, results: list[dict], latencies: dict[str, f
         await conn.execute(_CREATE_SCHEMA)
         await conn.execute(
             """INSERT INTO eval_runs
-               (run_id, total_cases, passed, failed, avg_faithfulness, avg_completeness, avg_correctness, git_commit)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-            (run_id, total, passed, total - passed, avg_f, avg_c, avg_k, git_commit),
+               (run_id, total_cases, passed, failed, avg_faithfulness, avg_completeness, avg_correctness, git_commit, notes)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            (run_id, total, passed, total - passed, avg_f, avg_c, avg_k, git_commit, EVAL_NOTES),
         )
         for r in results:
             await conn.execute(
@@ -239,6 +241,8 @@ async def store_results(run_id: str, results: list[dict], latencies: dict[str, f
 
     print(f"\nRun {run_id[:8]}: {passed}/{total} passed")
     print(f"Faithfulness {avg_f:.2f} | Completeness {avg_c:.2f} | Correctness {avg_k:.2f}")
+    if EVAL_NOTES:
+        print(f"Notes: {EVAL_NOTES}")
     failures = [r for r in results if not r["passed"]]
     for r in failures:
         print(f"  FAIL {r['test_case_id']} ({r['category']}): {r['failure_reason']}")

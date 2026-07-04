@@ -32,7 +32,11 @@ _tree_search_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0).with_structure
 _TREE_SEARCH_PROMPT = """
 You are given a question and a tree structure of an Amazon device support document.
 Each node has a node_id, title, and summary.
-Find all nodes likely to contain the answer.
+
+Return the node_ids of the 1 to 3 nodes most directly relevant to the question.
+Only include nodes whose content would specifically help answer the question.
+Do not include general overview, introduction, or table of contents nodes unless the question is explicitly about them.
+Prefer specific subsection nodes over broad chapter nodes.
 
 Question: {query}
 
@@ -63,6 +67,21 @@ def _build_node_map(tree: list, node_map: dict | None = None) -> dict:
     return node_map
 
 
+def _build_parent_map(tree: list, parent_id: str | None = None, parent_map: dict | None = None) -> dict:
+    if parent_map is None:
+        parent_map = {}
+    for node in tree:
+        parent_map[node["node_id"]] = parent_id
+        if "nodes" in node:
+            _build_parent_map(node["nodes"], node["node_id"], parent_map)
+    return parent_map
+
+
+def _drop_ancestors(node_ids: list[str], parent_map: dict) -> list[str]:
+    node_set = set(node_ids)
+    return [nid for nid in node_ids if parent_map.get(nid) not in node_set]
+
+
 async def _search_tree(tree: list, query: str) -> list[dict]:
     import json
     stripped = _strip_text(tree)
@@ -71,8 +90,10 @@ async def _search_tree(tree: list, query: str) -> list[dict]:
         tree_json=json.dumps(stripped, indent=2),
     )
     result: TreeSearchResult = await _tree_search_llm.ainvoke(prompt)
+    parent_map = _build_parent_map(tree)
+    deduped = _drop_ancestors(result.node_list, parent_map)[:3]
     node_map = _build_node_map(tree)
-    return [node_map[nid] for nid in result.node_list if nid in node_map]
+    return [node_map[nid] for nid in deduped if nid in node_map]
 
 
 #Fetches matching documents from MongoDB based on relevant_docs from state,
