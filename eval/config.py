@@ -18,6 +18,13 @@ class EvalSettings(BaseSettings):
     CORRECTNESS_THRESHOLD: float = 0.6
     RAG_PRECISION_THRESHOLD: float = 0.5
 
+    # OpenAI pricing per 1M tokens — update here when OpenAI changes rates
+    GPT4O_MINI_INPUT_PRICE:  float = 0.15
+    GPT4O_MINI_OUTPUT_PRICE: float = 0.60
+    GPT4O_INPUT_PRICE:       float = 2.50
+    GPT4O_OUTPUT_PRICE:      float = 10.00
+    AVG_PROMPT_TOKENS:       int   = 10_000  # typical prompt size for this bot
+
     # Regression thresholds — how much degradation vs baseline is acceptable before blocking a PR
     LATENCY_REGRESSION_THRESHOLD: float = 0.2   # 20% latency increase allowed
     COST_REGRESSION_THRESHOLD: float = 0.3       # 30% cost increase allowed

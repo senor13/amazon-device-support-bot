@@ -39,13 +39,10 @@ EVAL_NOTES             = os.environ.get("EVAL_NOTES", "")
 
 _openai = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-# OpenAI pricing per 1M tokens (as of 2026)
 _PRICING = {
-    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
-    "gpt-4o":      {"input": 2.50, "output": 10.00},
+    "gpt-4o-mini": {"input": eval_settings.GPT4O_MINI_INPUT_PRICE, "output": eval_settings.GPT4O_MINI_OUTPUT_PRICE},
+    "gpt-4o":      {"input": eval_settings.GPT4O_INPUT_PRICE,      "output": eval_settings.GPT4O_OUTPUT_PRICE},
 }
-# Typical prompt token size for this bot (tree ~6K + generation prompt ~1K + context ~3K)
-_AVG_PROMPT_TOKENS = 10_000
 
 
 def estimate_cost(model_used: str, response_text: str) -> float:
@@ -53,8 +50,8 @@ def estimate_cost(model_used: str, response_text: str) -> float:
     Approximate but consistent — good enough for regression detection."""
     pricing = _PRICING.get(model_used, _PRICING["gpt-4o-mini"])
     completion_tokens = len(response_text) / 4  # chars → tokens approximation
-    input_cost  = (_AVG_PROMPT_TOKENS  / 1_000_000) * pricing["input"]
-    output_cost = (completion_tokens   / 1_000_000) * pricing["output"]
+    input_cost  = (eval_settings.AVG_PROMPT_TOKENS / 1_000_000) * pricing["input"]
+    output_cost = (completion_tokens               / 1_000_000) * pricing["output"]
     return round(input_cost + output_cost, 6)
 
 
