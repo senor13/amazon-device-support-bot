@@ -22,17 +22,19 @@ from openai import AsyncOpenAI
 
 load_dotenv()
 
-API_BASE = "http://localhost:8000"
+from eval.config import eval_settings
+
+API_BASE = eval_settings.APP_URL
 JWT_SECRET = os.environ["JWT_SECRET"]
 POSTGRES_DSN = os.environ.get(
     "POSTGRES_DSN", "postgresql://postgres:postgres@localhost:5433/support_bot"
 ).replace("@postgres:5432", "@localhost:5433")
 
-DATASET_PATH = Path(__file__).parent / "dataset.json"
+DATASET_PATH = Path(eval_settings.DATASET_FILE)
 
-FAITHFULNESS_THRESHOLD = float(os.environ.get("FAITHFULNESS_THRESHOLD", "0.7"))
-COMPLETENESS_THRESHOLD = float(os.environ.get("COMPLETENESS_THRESHOLD", "0.6"))
-CORRECTNESS_THRESHOLD  = 0.6
+FAITHFULNESS_THRESHOLD = eval_settings.FAITHFULNESS_THRESHOLD
+COMPLETENESS_THRESHOLD = eval_settings.COMPLETENESS_THRESHOLD
+CORRECTNESS_THRESHOLD  = eval_settings.CORRECTNESS_THRESHOLD
 EVAL_NOTES             = os.environ.get("EVAL_NOTES", "")
 
 _openai = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])

@@ -10,6 +10,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.graph.graph import build_graph
+from eval.config import eval_settings
 from app.middleware.auth import auth_middleware
 from app.middleware.input_guard import input_guard_middleware
 from app.middleware.rate_limit import limiter
@@ -102,8 +103,8 @@ async def check_cache(query: str) -> str | None:
 
 
 _STREAM_NODES = {"generate_flash", "generate_pro", "generate_subquery"}
-_FAITHFULNESS_THRESHOLD = 0.7
-_COMPLETENESS_THRESHOLD = 0.6
+_FAITHFULNESS_THRESHOLD = eval_settings.FAITHFULNESS_THRESHOLD
+_COMPLETENESS_THRESHOLD = eval_settings.COMPLETENESS_THRESHOLD
 
 
 def _build_initial_state(body: QueryRequest, session_id: str, request_id: str, previous_history: list) -> dict:

@@ -1,5 +1,6 @@
 from pathlib import Path
 from langchain_openai import ChatOpenAI
+from langgraph.graph import END
 from langgraph.types import Send
 
 from app.graph.state import SupportBotState
@@ -101,6 +102,11 @@ async def merge_subqueries_node(state: SupportBotState) -> dict:
 
 
 # ── Routing ───────────────────────────────────────────────────────────────────
+
+def route_after_safety(state: SupportBotState) -> str:
+    # Attacks terminate at safety_merge — everything else continues to query intelligence
+    return END if state.get("is_attack") else "query_intelligence"
+
 
 def route_execution(state: SupportBotState):
     if state["needs_decomp"] and len(state["sub_queries"]) > 1:
