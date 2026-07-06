@@ -39,6 +39,24 @@ EVAL_NOTES             = os.environ.get("EVAL_NOTES", "")
 
 _openai = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
+# OpenAI pricing per 1M tokens (as of 2026)
+_PRICING = {
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    "gpt-4o":      {"input": 2.50, "output": 10.00},
+}
+# Typical prompt token size for this bot (tree ~6K + generation prompt ~1K + context ~3K)
+_AVG_PROMPT_TOKENS = 10_000
+
+
+def estimate_cost(model_used: str, response_text: str) -> float:
+    """Estimate cost using fixed prompt token assumption + response char count.
+    Approximate but consistent — good enough for regression detection."""
+    pricing = _PRICING.get(model_used, _PRICING["gpt-4o-mini"])
+    completion_tokens = len(response_text) / 4  # chars → tokens approximation
+    input_cost  = (_AVG_PROMPT_TOKENS  / 1_000_000) * pricing["input"]
+    output_cost = (completion_tokens   / 1_000_000) * pricing["output"]
+    return round(input_cost + output_cost, 6)
+
 
 async def wait_for_app(client: httpx.AsyncClient) -> None:
     print("Waiting for app to be ready...", end=" ", flush=True)
@@ -115,6 +133,8 @@ async def score_case(case: dict, body: dict | None, status: int) -> dict:
     response_text  = body.get("response",   "")             if body else ""
     request_id     = body.get("request_id", "")             if body else ""
 
+    estimated_cost_usd = estimate_cost(model_used, response_text) if status == 200 else 0.0
+
     correctness = None
     if expected_answer and response_text and status == 200:
         correctness = await score_correctness(case["query"], expected_answer, response_text)
@@ -163,45 +183,54 @@ async def score_case(case: dict, body: dict | None, status: int) -> dict:
         "http_status":         status,
         "failure_reason":      failure_reason,
         "request_id":          request_id,
+        "estimated_cost_usd":  estimated_cost_usd,
     }
 
 
 _CREATE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS eval_runs (
-    run_id           TEXT PRIMARY KEY,
-    created_at       TIMESTAMPTZ DEFAULT NOW(),
-    total_cases      INT,
-    passed           INT,
-    failed           INT,
-    avg_faithfulness  FLOAT,
-    avg_completeness  FLOAT,
-    avg_correctness   FLOAT,
-    avg_rag_precision FLOAT,
-    git_commit        TEXT,
-    notes             TEXT
+    run_id                  TEXT PRIMARY KEY,
+    created_at              TIMESTAMPTZ DEFAULT NOW(),
+    total_cases             INT,
+    passed                  INT,
+    failed                  INT,
+    avg_faithfulness        FLOAT,
+    avg_completeness        FLOAT,
+    avg_correctness         FLOAT,
+    avg_rag_precision       FLOAT,
+    avg_latency_ms          FLOAT,
+    total_cost_usd          FLOAT,
+    git_commit              TEXT,
+    notes                   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS eval_results (
-    id                 SERIAL PRIMARY KEY,
-    run_id             TEXT REFERENCES eval_runs(run_id) ON DELETE CASCADE,
-    test_case_id       TEXT,
-    category           TEXT,
-    query              TEXT,
-    bot_response       TEXT,
-    expected_answer    TEXT,
-    passed             BOOLEAN,
+    id                  SERIAL PRIMARY KEY,
+    run_id              TEXT REFERENCES eval_runs(run_id) ON DELETE CASCADE,
+    test_case_id        TEXT,
+    category            TEXT,
+    query               TEXT,
+    bot_response        TEXT,
+    expected_answer     TEXT,
+    passed              BOOLEAN,
     faithfulness_score  FLOAT,
     completeness_score  FLOAT,
     rag_precision_score FLOAT,
     correctness_score   FLOAT,
-    validation_passed  BOOLEAN,
-    model_used         TEXT,
-    http_status        INT,
-    latency_ms         FLOAT,
-    failure_reason     TEXT,
-    request_id         TEXT,
-    created_at         TIMESTAMPTZ DEFAULT NOW()
+    validation_passed   BOOLEAN,
+    model_used          TEXT,
+    http_status         INT,
+    latency_ms          FLOAT,
+    estimated_cost_usd  FLOAT,
+    failure_reason      TEXT,
+    request_id          TEXT,
+    created_at          TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Add new columns to existing tables if they don't exist yet
+ALTER TABLE eval_runs    ADD COLUMN IF NOT EXISTS avg_latency_ms FLOAT;
+ALTER TABLE eval_runs    ADD COLUMN IF NOT EXISTS total_cost_usd FLOAT;
+ALTER TABLE eval_results ADD COLUMN IF NOT EXISTS estimated_cost_usd FLOAT;
 """
 
 
@@ -215,6 +244,8 @@ async def store_results(run_id: str, results: list[dict], latencies: dict[str, f
     avg_p = sum(r["rag_precision_score"] for r in scored) / len(scored) if scored else 0.0
     correct_scored = [r for r in scored if r["correctness_score"] is not None]
     avg_k = sum(r["correctness_score"] for r in correct_scored) / len(correct_scored) if correct_scored else 0.0
+    avg_latency = sum(latencies.values()) / len(latencies) if latencies else 0.0
+    total_cost  = sum(r["estimated_cost_usd"] for r in results)
 
     try:
         git_commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
@@ -225,29 +256,34 @@ async def store_results(run_id: str, results: list[dict], latencies: dict[str, f
         await conn.execute(_CREATE_SCHEMA)
         await conn.execute(
             """INSERT INTO eval_runs
-               (run_id, total_cases, passed, failed, avg_faithfulness, avg_completeness, avg_correctness, avg_rag_precision, git_commit, notes)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-            (run_id, total, passed, total - passed, avg_f, avg_c, avg_k, avg_p, git_commit, EVAL_NOTES),
+               (run_id, total_cases, passed, failed, avg_faithfulness, avg_completeness,
+                avg_correctness, avg_rag_precision, avg_latency_ms, total_cost_usd, git_commit, notes)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (run_id, total, passed, total - passed, avg_f, avg_c, avg_k, avg_p,
+             avg_latency, total_cost, git_commit, EVAL_NOTES),
         )
         for r in results:
             await conn.execute(
                 """INSERT INTO eval_results
                    (run_id, test_case_id, category, query, bot_response, expected_answer,
                     passed, faithfulness_score, completeness_score, rag_precision_score, correctness_score,
-                    validation_passed, model_used, http_status, latency_ms, failure_reason, request_id)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    validation_passed, model_used, http_status, latency_ms, estimated_cost_usd,
+                    failure_reason, request_id)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (
                     run_id, r["test_case_id"], r["category"], r["query"],
                     r["bot_response"], r["expected_answer"], r["passed"],
                     r["faithfulness_score"], r["completeness_score"], r["rag_precision_score"], r["correctness_score"],
                     r["validation_passed"], r["model_used"], r["http_status"],
-                    latencies.get(r["test_case_id"], 0.0), r["failure_reason"], r["request_id"],
+                    latencies.get(r["test_case_id"], 0.0), r["estimated_cost_usd"],
+                    r["failure_reason"], r["request_id"],
                 ),
             )
         await conn.commit()
 
     print(f"\nRun {run_id[:8]}: {passed}/{total} passed")
     print(f"Faithfulness {avg_f:.2f} | Completeness {avg_c:.2f} | Correctness {avg_k:.2f} | RAG Precision {avg_p:.2f}")
+    print(f"Avg latency {avg_latency:.0f}ms | Total cost ${total_cost:.4f}")
     if EVAL_NOTES:
         print(f"Notes: {EVAL_NOTES}")
     failures = [r for r in results if not r["passed"]]

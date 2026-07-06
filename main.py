@@ -167,7 +167,8 @@ async def query_endpoint(body: QueryRequest, request: Request):
 
     log.info("cache_miss")
 
-    config = {"configurable": {"thread_id": session_id}}
+    # request_id in metadata makes this trace searchable in LangSmith by request_id
+    config = {"configurable": {"thread_id": session_id}, "metadata": {"request_id": request_id}}
     previous = await _graph.aget_state(config)
     previous_history = previous.values.get("session_history", []) if previous else []
     initial_state = _build_initial_state(body, session_id, request_id, previous_history)
