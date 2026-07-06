@@ -30,6 +30,7 @@ class EvalSettings(BaseSettings):
     class Config:
         env_prefix = "EVAL_"
         env_file = ".env"
+        extra = "ignore"
 
 
 eval_settings = EvalSettings()
