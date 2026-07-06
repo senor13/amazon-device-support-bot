@@ -1,6 +1,7 @@
 import asyncio
 import aiobreaker
 import motor.motor_asyncio
+from pathlib import Path
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
@@ -10,6 +11,10 @@ from app.resilience.breakers import pageindex_breaker
 from app.config import settings
 
 _mongo_client = None
+
+# In-memory cache for document trees. Populated on first fetch, reused for all subsequent requests.
+# Trees only change when documents are re-indexed, so fetching from MongoDB every request is wasteful.
+_tree_cache: dict[str, list] = {}
 
 #Creates a MongoDB client once and reuses it (singleton pattern). Returns the support_bot database.
 #Called every time retrieval runs but only creates the connection on the first call.
@@ -29,20 +34,10 @@ class TreeSearchResult(BaseModel):
 #temp = 0 for consistency, same nodeids every time for same query
 _tree_search_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0).with_structured_output(TreeSearchResult)
 
-_TREE_SEARCH_PROMPT = """
-You are given a question and a tree structure of an Amazon device support document.
-Each node has a node_id, title, and summary.
-
-Return the node_ids of the 1 to 3 nodes most directly relevant to the question.
-Only include nodes whose content would specifically help answer the question.
-Do not include general overview, introduction, or table of contents nodes unless the question is explicitly about them.
-Prefer specific subsection nodes over broad chapter nodes.
-
-Question: {query}
-
-Document tree:
-{tree_json}
-"""
+# Tree comes FIRST, query comes LAST.
+# OpenAI caches prompt prefixes — since the tree is static across requests, putting it first
+# means OpenAI caches those ~6K tokens and only charges for the query tokens on repeat calls.
+_TREE_SEARCH_PROMPT = (Path(__file__).parent.parent.parent / "prompts/v2/tree_search.txt").read_text()
 
 # Takes the full tree from MongoDB and removes the text field from every node recursively. Keeps only node_id, title, summary.
 # This slimmed-down tree is what gets sent to the LLM — sending full text of every node would be thousands of tokens and expensive.
@@ -101,9 +96,18 @@ async def _search_tree(tree: list, query: str) -> list[dict]:
 #Flattens all results and returns just the text fields as a flat list of strings.
 async def _fetch_and_search(scrubbed_query: str, doc_ids: list[str]) -> list[str]:
     db = get_mongo()
-    docs = await db.document_trees.find(
-        {"doc_id": {"$in": doc_ids}}
-    ).to_list(length=len(doc_ids))
+
+    # Only fetch from MongoDB the doc_ids not already in the in-memory cache.
+    # On first request all doc_ids are missing; on subsequent requests the cache is warm.
+    missing = [did for did in doc_ids if did not in _tree_cache]
+    if missing:
+        fetched = await db.document_trees.find(
+            {"doc_id": {"$in": missing}}
+        ).to_list(length=len(missing))
+        for doc in fetched:
+            _tree_cache[doc["doc_id"]] = doc["tree"]
+
+    docs = [{"doc_id": did, "tree": _tree_cache[did]} for did in doc_ids if did in _tree_cache]
 
     if not docs:
         return []

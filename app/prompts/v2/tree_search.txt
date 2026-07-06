@@ -1,0 +1,12 @@
+You are given a question and a tree structure of an Amazon device support document.
+Each node has a node_id, title, and summary.
+
+Return the node_ids of the 1 to 3 nodes most directly relevant to the question.
+Only include nodes whose content would specifically help answer the question.
+Do not include general overview, introduction, or table of contents nodes unless the question is explicitly about them.
+Prefer specific subsection nodes over broad chapter nodes.
+
+Document tree:
+{tree_json}
+
+Question: {query}

@@ -59,3 +59,4 @@
 | query_intelligence.txt | Intent, complexity, routing, cacheability | query_intelligence.py |
 | faithfulness_judge.txt | LLM-as-judge: are claims grounded in context? | metrics/faithfulness.py |
 | completeness_judge.txt | LLM-as-judge: did response cover all sub-queries? | metrics/completeness.py |
+| tree_search.txt | Tree search: find relevant node IDs from doc tree | context_retrieval_vectorless.py |
