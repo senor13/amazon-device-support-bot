@@ -44,7 +44,6 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      # Install eval deps (runner, config, httpx, jose, etc.) but not the full app
       - name: Install eval deps
         run: pip install httpx python-jose python-dotenv openai pydantic-settings psycopg
 
@@ -53,7 +52,6 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          PAGEINDEX_API_KEY: ${{ secrets.PAGEINDEX_API_KEY }}
           LANGCHAIN_API_KEY: ${{ secrets.LANGCHAIN_API_KEY }}
           LANGCHAIN_TRACING_V2: "true"
         run: |
@@ -70,15 +68,27 @@ jobs:
           done
           curl -sf http://localhost:8000/health || (docker compose logs app && exit 1)
 
-      # ── Seed MongoDB so the bot has document trees to query ──────────────────
-      - name: Seed document index
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          MONGODB_URI: mongodb://localhost:27017
-          PAGEINDEX_API_KEY: ${{ secrets.PAGEINDEX_API_KEY }}
+      # ── Seed MongoDB from committed fixture — no PageIndex API call needed ────
+      - name: Seed MongoDB document trees
         run: |
-          pip install motor pymongo openai
-          python prep/index_docs.py || echo "Seed skipped (already indexed or no docs)"
+          pip install motor pymongo
+          python3 - <<'EOF'
+          import asyncio, json
+          import motor.motor_asyncio
+
+          async def seed():
+              client = motor.motor_asyncio.AsyncIOMotorClient("mongodb://localhost:27017")
+              with open("prep/seed/document_trees.json") as f:
+                  docs = [json.loads(line) for line in f if line.strip()]
+              for doc in docs:
+                  await client.support_bot.document_trees.replace_one(
+                      {"doc_id": doc["doc_id"]}, doc, upsert=True
+                  )
+              print(f"Seeded {len(docs)} document tree(s)")
+              client.close()
+
+          asyncio.run(seed())
+          EOF
 
       # ── Run gate cases ────────────────────────────────────────────────────────
       - name: Run live gate
@@ -89,7 +99,6 @@ jobs:
           EVAL_APP_URL: http://localhost:8000
           POSTGRES_DSN: postgresql://postgres:postgres@localhost:5433/support_bot
         run: |
-          # Capture full output — used for the PR comment
           python -m eval.live_gate 2>&1 | tee /tmp/gate_output.txt
           echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
 
@@ -109,7 +118,6 @@ jobs:
 
             const body = `${header}\n\n<details><summary>Full gate output</summary>\n\n\`\`\`\n${output}\n\`\`\`\n\n</details>`;
 
-            // Find existing bot comment on this PR and update it, or create new
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -138,7 +146,6 @@ jobs:
         if: steps.gate.outputs.exit_code != '0'
         run: exit 1
 
-      # ── Always dump logs on failure ────────────────────────────────────────
       - name: Dump app logs on failure
         if: failure()
         run: docker compose logs app --tail=100
