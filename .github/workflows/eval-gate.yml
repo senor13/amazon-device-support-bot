@@ -1,0 +1,144 @@
+name: Eval Gate
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: eval-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Job 1: Offline eval (no LLM, no server) ──────────────────────────────────
+  offline-eval:
+    name: Offline Eval
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Run offline tests
+        env:
+          OPENAI_API_KEY: offline-test-fake-key
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        run: python -m pytest eval/offline/ -q --tb=short
+
+  # ── Job 2: Live gate (spins up full stack, runs 7 gate cases) ────────────────
+  live-gate:
+    name: Live Gate
+    runs-on: ubuntu-latest
+    needs: offline-eval  # only run if offline passes
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # Install eval deps (runner, config, httpx, jose, etc.) but not the full app
+      - name: Install eval deps
+        run: pip install httpx python-jose python-dotenv openai pydantic-settings psycopg
+
+      # ── Start full stack ─────────────────────────────────────────────────────
+      - name: Build and start services
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          PAGEINDEX_API_KEY: ${{ secrets.PAGEINDEX_API_KEY }}
+          LANGCHAIN_API_KEY: ${{ secrets.LANGCHAIN_API_KEY }}
+          LANGCHAIN_TRACING_V2: "true"
+        run: |
+          docker compose up -d --build
+          echo "Waiting for app health check..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/health; then
+              echo ""
+              echo "App is ready."
+              break
+            fi
+            echo "Attempt $i/30 — retrying in 10s..."
+            sleep 10
+          done
+          curl -sf http://localhost:8000/health || (docker compose logs app && exit 1)
+
+      # ── Seed MongoDB so the bot has document trees to query ──────────────────
+      - name: Seed document index
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MONGODB_URI: mongodb://localhost:27017
+          PAGEINDEX_API_KEY: ${{ secrets.PAGEINDEX_API_KEY }}
+        run: |
+          pip install motor pymongo openai
+          python prep/index_docs.py || echo "Seed skipped (already indexed or no docs)"
+
+      # ── Run gate cases ────────────────────────────────────────────────────────
+      - name: Run live gate
+        id: gate
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          EVAL_APP_URL: http://localhost:8000
+          POSTGRES_DSN: postgresql://postgres:postgres@localhost:5433/support_bot
+        run: |
+          # Capture full output — used for the PR comment
+          python -m eval.live_gate 2>&1 | tee /tmp/gate_output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+
+      # ── Post markdown report as PR comment ───────────────────────────────────
+      - name: Post gate report as PR comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('/tmp/gate_output.txt', 'utf8');
+            const exitCode = '${{ steps.gate.outputs.exit_code }}';
+            const header = exitCode === '0'
+              ? '## ✅ Eval Gate Passed'
+              : '## ❌ Eval Gate Failed — Merge Blocked';
+
+            const body = `${header}\n\n<details><summary>Full gate output</summary>\n\n\`\`\`\n${output}\n\`\`\`\n\n</details>`;
+
+            // Find existing bot comment on this PR and update it, or create new
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Eval Gate')
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Fail job if gate failed
+        if: steps.gate.outputs.exit_code != '0'
+        run: exit 1
+
+      # ── Always dump logs on failure ────────────────────────────────────────
+      - name: Dump app logs on failure
+        if: failure()
+        run: docker compose logs app --tail=100
