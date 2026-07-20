@@ -1,6 +1,14 @@
 # Amazon Kindle Support Bot
 
-AI-powered Amazon Kindle support chatbot built with LangGraph, FastAPI, and OpenAI. Features parallel safety gates (PII scrubbing + attack detection), tree-based RAG via PageIndex, semantic caching with GPTCache, and LLM-as-judge output validation.
+Production-grade conversational support bot for Amazon Kindle devices, built to demonstrate end-to-end LLM system design — from query handling to eval-gated CI/CD.
+
+**Core pipeline:** FastAPI → LangGraph state machine → vectorless RAG (PageIndex + MongoDB) → gpt-4o-mini / gpt-4o → LLM-as-judge validation (faithfulness, completeness, RAG precision)
+
+**Safety:** Parallel PII scrubbing (Presidio) + prompt injection detection before any LLM call. Semantic caching (GPTCache) for repeated queries.
+
+**Eval pipeline:** 28-case dataset across 8 categories. Offline structural tests (34, no LLM) gate every PR. Live gate (7 cases, ~$0.02) runs against the full stack on every PR to `main`, posts a regression report as a PR comment, and blocks merge on any quality drop vs baseline.
+
+**Observability:** LangSmith traces every LangGraph node. Structured JSON logging (structlog) with request_id correlation across all nodes. Per-response scores stored in Postgres for trend analysis.
 
 ![Architecture](architecture.png)
 
@@ -41,9 +49,11 @@ POST /query
 | Session memory | LangGraph PostgresSaver + psycopg |
 | LLM (low complexity) | gpt-4o-mini |
 | LLM (high complexity) | gpt-4o |
-| Output validation | LLM-as-judge faithfulness + completeness |
+| Output validation | LLM-as-judge faithfulness · completeness · RAG precision |
+| Eval storage | PostgreSQL (eval_runs + eval_results tables) |
 | Observability (LLM) | LangSmith |
 | Observability (app) | structlog |
+| CI/CD | GitHub Actions |
 | Retries | tenacity |
 | Circuit breaking | aiobreaker |
 | HTTP client | httpx |
@@ -147,16 +157,91 @@ To make a new prompt version: copy `app/prompts/v1/` to `app/prompts/v2/`, edit,
 
 ## Circuit breakers and fallbacks
 
-| Dependency | Breaker opens after | Fallback behaviour |
-|---|---|---|
-| PageIndex / MongoDB | 5 failures | Empty context, LLM answers from training knowledge |
-| GPTCache | 10 failures | Skip cache, continue normally |
-| LLM provider | — (tenacity retries x3) | 503 to user |
+| Dependency | Breaker opens after | Reset after | Fallback behaviour |
+|---|---|---|---|
+| PageIndex / MongoDB | 5 consecutive failures | 30s | `retrieved_context` set to `[]` — generation prompt Rule 5 activates: bot tells user it couldn't find the information and directs to amazon.com/help. No hallucination from training data. |
+| GPTCache | 10 consecutive failures | 15s | Cache check and store skipped — request continues through full graph normally, no user impact |
+| LLM provider | — | — | tenacity retries 3× with exponential backoff, then returns 503 to user |
 
 ## Validation and escalation
 
-Every response is scored by two independent LLM-as-judge metrics:
-- **Faithfulness** — are all claims grounded in the retrieved documentation?
-- **Completeness** — did the response address all parts of the user's question?
+Every response is scored by three independent LLM-as-judge metrics running in parallel:
 
-If either score falls below threshold, the response is still shown to the user but an `error` level log is emitted with the full request context (request_id, session_id, query) for engineer review.
+| Metric | What it measures | Threshold |
+|---|---|---|
+| **Faithfulness** | Are all claims grounded in retrieved documentation? | 0.7 |
+| **Completeness** | Did the response cover all sub-queries identified by query intelligence? | 0.6 |
+| **RAG Precision** | Of the retrieved nodes, what fraction was actually used in the response? | 0.5 |
+
+If faithfulness or completeness fall below threshold, the response is still shown to the user but a `warning` level log is emitted with full request context (request_id, session_id, query) for engineer review. RAG precision tracks retrieval quality — low precision means nodes were fetched but ignored, indicating the tree search prompt needs tuning.
+
+---
+
+## Eval pipeline
+
+### Dataset
+
+`eval/dataset.json` — 28 hand-authored test cases across 8 categories:
+
+**Pass criteria (hard gates — affect pass/fail):**
+
+| Category | Criteria |
+|---|---|
+| `how_to`, `about`, `troubleshoot`, `multi_turn`, `edge_case` | faithfulness ≥ 0.7, completeness ≥ 0.6, correctness ≥ 0.6 |
+| `multi_query` | same as above |
+| `out_of_scope` | LLM correctness judge — did the bot deflect appropriately? |
+| `attack` | HTTP 403 |
+
+**Observability metadata (logged, not gated):**
+
+Each case also tracks `expected_model`, `expected_complexity`, `expected_needs_decomp`, and `sub_query_count` as metadata. The `QueryResponse` returns `needs_decomp` and `sub_queries` so the runner can log actual vs expected routing — useful for spotting cost/efficiency regressions (e.g. simple queries silently routed to gpt-4o) without blocking merges on them.
+
+### Offline eval (fast, free)
+
+34 structural tests that run with no LLM, no server, no Docker:
+
+```bash
+pytest eval/offline/ -q
+```
+
+Checks: dataset integrity, routing logic, prompt file validity, import safety for all graph nodes.
+
+### Live eval runner (full suite)
+
+Fires all 28 cases against the running app, scores with LLM judges, stores results in Postgres:
+
+```bash
+python -m eval.runner
+```
+
+Results stored in `eval_runs` and `eval_results` tables with per-case scores, latency, estimated cost, and routing assertions (`actual_needs_decomp`, `actual_sub_count`).
+
+### Live gate (PR gate, ~$0.02)
+
+Runs 1 representative case per category (7 total) and compares against the baseline in `eval/baselines/latest.json`:
+
+```bash
+python -m eval.live_gate
+```
+
+Blocks on: pass rate drop, per-case regression (previously passing case now fails), >20% latency increase, >30% cost increase.
+
+---
+
+## CI/CD pipeline
+
+Every PR to `main` triggers two sequential GitHub Actions jobs:
+
+```
+PR opened
+    ↓
+[Offline Eval] pytest eval/offline/ — 34 tests, ~44s, free
+    ↓ only if passes
+[Live Gate] docker compose up → seed MongoDB → run 7 gate cases → post PR comment
+    ↓ blocks merge on regression
+Merge to main
+```
+
+The live gate posts a markdown report directly as a PR comment showing per-case results and a vs-baseline comparison table.
+
+**Required GitHub Secrets:** `OPENAI_API_KEY`, `JWT_SECRET`, `LANGCHAIN_API_KEY`
