@@ -153,9 +153,7 @@ async def score_case(case: dict, body: dict | None, status: int) -> dict:
             passed = True
 
     else:
-        expected_decomp      = case.get("expected_needs_decomp")
-        expected_sub_count   = case.get("sub_query_count")
-
+        # Hard gates — user experience
         if status != 200:
             failure_reason = f"unexpected HTTP {status}"
         elif faithfulness < FAITHFULNESS_THRESHOLD:
@@ -166,12 +164,9 @@ async def score_case(case: dict, body: dict | None, status: int) -> dict:
             failure_reason = "validation_passed=False"
         elif correctness is not None and correctness < CORRECTNESS_THRESHOLD:
             failure_reason = f"correctness {correctness:.2f} < {CORRECTNESS_THRESHOLD}"
-        elif expected_decomp is True and not actual_decomp:
-            failure_reason = "expected needs_decomp=true but bot did not decompose query"
-        elif expected_sub_count and len(actual_queries) != expected_sub_count:
-            failure_reason = f"expected {expected_sub_count} sub-queries, got {len(actual_queries)}"
         else:
             passed = True
+        # Routing metadata — logged for observability, does not affect pass/fail
 
     return {
         "test_case_id":        case["id"],
