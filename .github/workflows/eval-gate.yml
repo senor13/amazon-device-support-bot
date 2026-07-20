@@ -44,8 +44,8 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install eval deps
-        run: pip install httpx python-jose python-dotenv openai pydantic-settings psycopg
+      - name: Install deps
+        run: pip install -r requirements.txt
 
       # ── Start full stack ─────────────────────────────────────────────────────
       - name: Build and start services
@@ -71,7 +71,6 @@ jobs:
       # ── Seed MongoDB from committed fixture — no PageIndex API call needed ────
       - name: Seed MongoDB document trees
         run: |
-          pip install motor pymongo
           python3 - <<'EOF'
           import asyncio, json
           import motor.motor_asyncio
