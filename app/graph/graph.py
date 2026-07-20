@@ -18,6 +18,7 @@ from app.graph.nodes.execution import (
     generate_subquery_node,
     merge_subqueries_node,
     route_execution,
+    route_after_safety,
 )
 from app.graph.nodes.output_validation import (
     faithfulness_node,
@@ -27,10 +28,6 @@ from app.graph.nodes.output_validation import (
 )
 from app.graph.nodes.cache_store import cache_store_node
 from app.config import settings
-
-
-def _route_after_safety(state: SupportBotState) -> str:
-    return END if state.get("is_attack") else "query_intelligence"
 
 
 async def build_graph(pool: AsyncConnectionPool):
@@ -83,7 +80,7 @@ async def build_graph(pool: AsyncConnectionPool):
     g.add_edge("attack_detect", "safety_merge")
 
     # After merge: reject attacks, otherwise continue
-    g.add_conditional_edges("safety_merge", _route_after_safety)
+    g.add_conditional_edges("safety_merge", route_after_safety)
 
     g.add_edge("query_intelligence", "session_memory")
     g.add_edge("session_memory", "context_retrieval")
