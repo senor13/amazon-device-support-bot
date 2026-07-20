@@ -129,6 +129,8 @@ async def score_case(case: dict, body: dict | None, status: int) -> dict:
     model_used     = body.get("model_used", "")             if body else ""
     response_text  = body.get("response",   "")             if body else ""
     request_id     = body.get("request_id", "")             if body else ""
+    actual_decomp  = body.get("needs_decomp", False)        if body else False
+    actual_queries = body.get("sub_queries", [])            if body else []
 
     estimated_cost_usd = estimate_cost(model_used, response_text) if status == 200 else 0.0
 
@@ -151,6 +153,9 @@ async def score_case(case: dict, body: dict | None, status: int) -> dict:
             passed = True
 
     else:
+        expected_decomp      = case.get("expected_needs_decomp")
+        expected_sub_count   = case.get("sub_query_count")
+
         if status != 200:
             failure_reason = f"unexpected HTTP {status}"
         elif faithfulness < FAITHFULNESS_THRESHOLD:
@@ -161,6 +166,10 @@ async def score_case(case: dict, body: dict | None, status: int) -> dict:
             failure_reason = "validation_passed=False"
         elif correctness is not None and correctness < CORRECTNESS_THRESHOLD:
             failure_reason = f"correctness {correctness:.2f} < {CORRECTNESS_THRESHOLD}"
+        elif expected_decomp is True and not actual_decomp:
+            failure_reason = "expected needs_decomp=true but bot did not decompose query"
+        elif expected_sub_count and len(actual_queries) != expected_sub_count:
+            failure_reason = f"expected {expected_sub_count} sub-queries, got {len(actual_queries)}"
         else:
             passed = True
 
@@ -181,6 +190,8 @@ async def score_case(case: dict, body: dict | None, status: int) -> dict:
         "failure_reason":      failure_reason,
         "request_id":          request_id,
         "estimated_cost_usd":  estimated_cost_usd,
+        "actual_needs_decomp": actual_decomp,
+        "actual_sub_count":    len(actual_queries),
     }
 
 
@@ -228,6 +239,8 @@ CREATE TABLE IF NOT EXISTS eval_results (
 ALTER TABLE eval_runs    ADD COLUMN IF NOT EXISTS avg_latency_ms FLOAT;
 ALTER TABLE eval_runs    ADD COLUMN IF NOT EXISTS total_cost_usd FLOAT;
 ALTER TABLE eval_results ADD COLUMN IF NOT EXISTS estimated_cost_usd FLOAT;
+ALTER TABLE eval_results ADD COLUMN IF NOT EXISTS actual_needs_decomp BOOLEAN;
+ALTER TABLE eval_results ADD COLUMN IF NOT EXISTS actual_sub_count INT;
 """
 
 
@@ -265,8 +278,8 @@ async def store_results(run_id: str, results: list[dict], latencies: dict[str, f
                    (run_id, test_case_id, category, query, bot_response, expected_answer,
                     passed, faithfulness_score, completeness_score, rag_precision_score, correctness_score,
                     validation_passed, model_used, http_status, latency_ms, estimated_cost_usd,
-                    failure_reason, request_id)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    failure_reason, request_id, actual_needs_decomp, actual_sub_count)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (
                     run_id, r["test_case_id"], r["category"], r["query"],
                     r["bot_response"], r["expected_answer"], r["passed"],
@@ -274,6 +287,7 @@ async def store_results(run_id: str, results: list[dict], latencies: dict[str, f
                     r["validation_passed"], r["model_used"], r["http_status"],
                     latencies.get(r["test_case_id"], 0.0), r["estimated_cost_usd"],
                     r["failure_reason"], r["request_id"],
+                    r.get("actual_needs_decomp"), r.get("actual_sub_count"),
                 ),
             )
         await conn.commit()

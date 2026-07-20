@@ -80,6 +80,8 @@ class QueryResponse(BaseModel):
     rag_precision_score: float
     validation_passed: bool
     model_used: str
+    needs_decomp: bool = False
+    sub_queries: list[str] = []
 
 
 # ── Cache helper ──────────────────────────────────────────────────────────────
@@ -221,6 +223,8 @@ async def query_endpoint(body: QueryRequest, request: Request):
                 rag_precision_score=result.get("rag_precision_score", 0.0),
                 validation_passed=result.get("validation_passed", False),
                 model_used=result.get("model_used", "unknown"),
+                needs_decomp=result.get("needs_decomp", False),
+                sub_queries=result.get("sub_queries", []),
             )
             yield f"\n\n[METADATA]{json.dumps(stream_resp.model_dump())}"
 
@@ -253,6 +257,8 @@ async def query_endpoint(body: QueryRequest, request: Request):
         rag_precision_score=result.get("rag_precision_score", 0.0),
         validation_passed=result.get("validation_passed", False),
         model_used=result.get("model_used", "unknown"),
+        needs_decomp=result.get("needs_decomp", False),
+        sub_queries=result.get("sub_queries", []),
     )
 
 
