@@ -179,69 +179,95 @@ If faithfulness or completeness fall below threshold, the response is still show
 
 ## Eval pipeline
 
-### Dataset
+### Eval dataset (`eval/dataset.json`)
 
-`eval/dataset.json` — 28 hand-authored test cases across 8 categories:
+28 hand-authored test cases covering every scenario the bot handles. Each case has a `query`, `expected_answer`, and category-specific pass criteria:
 
-**Pass criteria (hard gates — affect pass/fail):**
+| Category | Count | Pass criteria (hard gates) |
+|---|---|---|
+| `how_to` | 4 | faithfulness ≥ 0.7, completeness ≥ 0.6, correctness ≥ 0.6 |
+| `about` | 4 | faithfulness ≥ 0.7, completeness ≥ 0.6, correctness ≥ 0.6 |
+| `troubleshoot` | 4 | faithfulness ≥ 0.7, completeness ≥ 0.6, correctness ≥ 0.6 |
+| `multi_turn` | 3 | faithfulness ≥ 0.7, completeness ≥ 0.6, correctness ≥ 0.6 |
+| `edge_case` | 3 | faithfulness ≥ 0.7, completeness ≥ 0.6, correctness ≥ 0.6 |
+| `multi_query` | 3 | faithfulness ≥ 0.7, completeness ≥ 0.6, correctness ≥ 0.6 |
+| `out_of_scope` | 4 | LLM correctness judge — did the bot deflect appropriately? |
+| `attack` | 4 | HTTP 403 |
 
-| Category | Criteria |
-|---|---|
-| `how_to`, `about`, `troubleshoot`, `multi_turn`, `edge_case` | faithfulness ≥ 0.7, completeness ≥ 0.6, correctness ≥ 0.6 |
-| `multi_query` | same as above |
-| `out_of_scope` | LLM correctness judge — did the bot deflect appropriately? |
-| `attack` | HTTP 403 |
+Each case also carries `expected_model`, `expected_complexity`, `expected_needs_decomp`, and `sub_query_count` as **observability metadata** — logged to Postgres per run but not a pass/fail gate. Used to detect cost/routing regressions (e.g. simple queries silently routed to gpt-4o) in trend analysis without blocking merges.
 
-**Observability metadata (logged, not gated):**
+7 cases are marked `is_gate_case: true` (one per category) — these are the cases the live gate runs on every PR.
 
-Each case also tracks `expected_model`, `expected_complexity`, `expected_needs_decomp`, and `sub_query_count` as metadata. The `QueryResponse` returns `needs_decomp` and `sub_queries` so the runner can log actual vs expected routing — useful for spotting cost/efficiency regressions (e.g. simple queries silently routed to gpt-4o) without blocking merges on them.
+---
 
-### Offline eval (fast, free)
+### Full behavioral eval — manual (~$0.25, ~5 min)
 
-34 structural tests that run with no LLM, no server, no Docker:
-
-```bash
-pytest eval/offline/ -q
-```
-
-Checks: dataset integrity, routing logic, prompt file validity, import safety for all graph nodes.
-
-### Live eval runner (full suite)
-
-Fires all 28 cases against the running app, scores with LLM judges, stores results in Postgres:
+Run deliberately before a major release, after a prompt or model change, or to refresh the regression baseline. Not automated.
 
 ```bash
 python -m eval.runner
 ```
 
-Results stored in `eval_runs` and `eval_results` tables with per-case scores, latency, estimated cost, and routing assertions (`actual_needs_decomp`, `actual_sub_count`).
+Fires all 28 cases against the running app, scores each with LLM judges (faithfulness, completeness, correctness), and stores results in Postgres (`eval_runs` + `eval_results` tables) with per-case scores, latency, estimated cost, and routing metadata. Run this to update `eval/baselines/latest.json` when you want a new baseline.
 
-### Live gate (PR gate, ~$0.02)
+---
 
-Runs 1 representative case per category (7 total) and compares against the baseline in `eval/baselines/latest.json`:
+### Live gate — automated on every PR (~$0.02, ~3 min)
+
+Runs the 7 gate cases (one per category) against the full running stack and compares against the baseline:
 
 ```bash
 python -m eval.live_gate
 ```
 
-Blocks on: pass rate drop, per-case regression (previously passing case now fails), >20% latency increase, >30% cost increase.
+Blocks merge on:
+- Any pass rate drop vs baseline
+- A previously passing case now failing
+- Avg latency increase > 20%
+- Estimated cost increase > 30%
+
+Posts a markdown report as a PR comment with per-case results and a vs-baseline comparison table.
 
 ---
 
-## CI/CD pipeline
+### Offline structural tests — automated on every PR (~free, ~44s)
+
+34 tests that run with no LLM, no server, no Docker. The purpose is to catch obvious code-level errors cheaply before spending money on LLM calls:
+
+```bash
+pytest eval/offline/ -q
+```
+
+| Test file | What it checks |
+|---|---|
+| `test_dataset.py` | Dataset parses correctly, no duplicate IDs, all required fields present |
+| `test_dataset_consistency.py` | complexity↔model alignment, decomp↔sub_query_count consistency |
+| `test_prompts.py` | All prompt files exist, are readable, placeholders match expected |
+| `test_routing.py` | `route_execution` and `route_after_safety` unit tests with fake states |
+| `test_imports.py` | All graph nodes import cleanly without Docker-only packages |
+
+---
+
+### CI/CD pipeline
 
 Every PR to `main` triggers two sequential GitHub Actions jobs:
 
 ```
-PR opened
-    ↓
-[Offline Eval] pytest eval/offline/ — 34 tests, ~44s, free
-    ↓ only if passes
-[Live Gate] docker compose up → seed MongoDB → run 7 gate cases → post PR comment
-    ↓ blocks merge on regression
+PR opened / updated
+        ↓
+[Job 1] Offline Structural Tests (~44s, free)
+        pytest eval/offline/ — 34 tests
+        ↓ only if Job 1 passes
+[Job 2] Live Gate (~3 min, ~$0.02)
+        docker compose up --build
+        → seed MongoDB from fixture
+        → run 7 gate cases against live app
+        → compare vs baseline
+        → post markdown report as PR comment
+        ↓ blocks merge on regression
 Merge to main
 ```
 
-The live gate posts a markdown report directly as a PR comment showing per-case results and a vs-baseline comparison table.
+Jobs run sequentially — offline tests act as a cheap fast filter so the live gate only runs if the code is structurally sound. `concurrency: cancel-in-progress` ensures rapid pushes don't trigger duplicate runs.
 
 **Required GitHub Secrets:** `OPENAI_API_KEY`, `JWT_SECRET`, `LANGCHAIN_API_KEY`
