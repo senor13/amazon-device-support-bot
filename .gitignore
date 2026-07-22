@@ -31,3 +31,9 @@ PHASE2_NOTES.md
 # IDE
 .vscode/
 .idea/
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/.terraform.lock.hcl
