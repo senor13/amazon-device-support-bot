@@ -3,6 +3,7 @@ name: Eval Gate
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: eval-gate-${{ github.ref }}
@@ -47,6 +48,31 @@ jobs:
       - name: Install deps
         run: pip install -r requirements.txt
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ hashFiles('Dockerfile', 'requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Build app image with cache
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: amazon-device-support-bot-app:latest
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+
+      - name: Rotate cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
       # ── Start full stack ─────────────────────────────────────────────────────
       - name: Build and start services
         env:
@@ -54,16 +80,17 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           LANGCHAIN_API_KEY: ${{ secrets.LANGCHAIN_API_KEY }}
           LANGCHAIN_TRACING_V2: "true"
+          PAGEINDEX_API_KEY: "ci-not-used"
         run: |
           docker compose up -d --build
           echo "Waiting for app health check..."
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             if curl -sf http://localhost:8000/health; then
               echo ""
               echo "App is ready."
               break
             fi
-            echo "Attempt $i/30 — retrying in 10s..."
+            echo "Attempt $i/60 — retrying in 10s..."
             sleep 10
           done
           curl -sf http://localhost:8000/health || (docker compose logs app && exit 1)
@@ -98,6 +125,7 @@ jobs:
           EVAL_APP_URL: http://localhost:8000
           POSTGRES_DSN: postgresql://postgres:postgres@localhost:5433/support_bot
         run: |
+          touch /tmp/gate_output.txt
           python -m eval.live_gate 2>&1 | tee /tmp/gate_output.txt
           echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
 
@@ -109,7 +137,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const output = fs.readFileSync('/tmp/gate_output.txt', 'utf8');
+            const output = fs.existsSync('/tmp/gate_output.txt')
+              ? fs.readFileSync('/tmp/gate_output.txt', 'utf8')
+              : 'No output captured — gate step failed to start. Check the Actions log for details.';
             const exitCode = '${{ steps.gate.outputs.exit_code }}';
             const header = exitCode === '0'
               ? '## ✅ Eval Gate Passed'
