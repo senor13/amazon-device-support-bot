@@ -57,6 +57,13 @@ POST /query
 | Retries | tenacity |
 | Circuit breaking | aiobreaker |
 | HTTP client | httpx |
+| Container runtime | GCP Cloud Run |
+| Image registry | GCP Artifact Registry |
+| Secrets (production) | GCP Secret Manager |
+| Infrastructure as Code | Terraform |
+| GCP auth (CI) | Workload Identity Federation |
+| Postgres (production) | Neon serverless |
+| MongoDB (production) | MongoDB Atlas |
 
 ## Prerequisites
 
@@ -270,4 +277,88 @@ Merge to main
 
 Jobs run sequentially — offline tests act as a cheap fast filter so the live gate only runs if the code is structurally sound. `concurrency: cancel-in-progress` ensures rapid pushes don't trigger duplicate runs.
 
-**Required GitHub Secrets:** `OPENAI_API_KEY`, `JWT_SECRET`, `LANGCHAIN_API_KEY`
+**Required GitHub Secrets:** `OPENAI_API_KEY`, `JWT_SECRET`, `LANGCHAIN_API_KEY`, `NEON_DSN`
+
+On merge to `main`, a second workflow (`deploy.yml`) automatically builds and deploys to production — see [Deployment](#deployment) below.
+
+---
+
+## Deployment
+
+The bot is deployed to **GCP Cloud Run** and publicly accessible at:
+
+```
+https://amazon-device-support-bot-fmbp5s3cjq-uc.a.run.app
+```
+
+Health check:
+```bash
+curl https://amazon-device-support-bot-fmbp5s3cjq-uc.a.run.app/health
+# {"status":"ok","graph_ready":true}
+```
+
+### Production stack
+
+| Component | Service |
+|---|---|
+| Container runtime | GCP Cloud Run (scales to zero, managed HTTPS) |
+| Image registry | GCP Artifact Registry |
+| Secrets | GCP Secret Manager |
+| Session memory (Postgres) | Neon (serverless Postgres) |
+| Document store (MongoDB) | MongoDB Atlas (free tier) |
+| Infrastructure as Code | Terraform (`terraform/`) |
+
+### How deployment works
+
+Every merge to `main` triggers the deploy workflow automatically:
+
+```
+Merge to main
+      ↓
+[GitHub Actions — deploy.yml]
+      ├── Authenticate to GCP via Workload Identity Federation (no JSON keys)
+      ├── docker build --platform linux/amd64 -t app:$GITHUB_SHA .
+      ├── Push image → Artifact Registry
+      └── gcloud run deploy → new Cloud Run revision
+```
+
+Each image is tagged with the git commit SHA (`app:cc7b818`) so every revision is traceable back to an exact commit. Cloud Run performs zero-downtime rollout — the old revision keeps serving traffic until the new one passes its health check.
+
+### Infrastructure as Code
+
+All GCP resources are defined in `terraform/main.tf`:
+
+```bash
+cd terraform
+terraform init
+terraform plan   # preview changes
+terraform apply  # create/update resources
+```
+
+Resources managed by Terraform: Artifact Registry repository, Secret Manager secrets (containers only — values added via GCP Console), Cloud Run service, `kindle-bot-runner` service account, and IAM bindings.
+
+**Required GitHub Secrets for deploy:** `WIF_PROVIDER`, `SERVICE_ACCOUNT`, `GCP_PROJECT_ID`, `GCP_REGION`
+
+Authentication uses Workload Identity Federation — no long-lived JSON key files stored as secrets.
+
+### Manual deploy
+
+To trigger a deploy without a code change:
+
+GitHub → Actions → **Deploy to Cloud Run** → Run workflow → select `main`
+
+### Making a request to production
+
+Generate a JWT (same `JWT_SECRET` as local):
+
+```python
+from jose import jwt
+token = jwt.encode({"sub": "test-user"}, YOUR_JWT_SECRET, algorithm="HS256")
+```
+
+```bash
+curl -X POST https://amazon-device-support-bot-fmbp5s3cjq-uc.a.run.app/query \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "How do I connect my Kindle to WiFi?", "session_id": "session-1"}'
+```
