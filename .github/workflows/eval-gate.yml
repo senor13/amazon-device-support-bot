@@ -123,7 +123,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           EVAL_APP_URL: http://localhost:8000
-          POSTGRES_DSN: postgresql://postgres:postgres@localhost:5433/support_bot
+          POSTGRES_DSN: ${{ secrets.NEON_DSN }}
         run: |
           touch /tmp/gate_output.txt
           python -m eval.live_gate 2>&1 | tee /tmp/gate_output.txt
