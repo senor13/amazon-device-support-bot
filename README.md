@@ -1,4 +1,4 @@
-# Amazon Kindle Support Bot
+# Amazon Devices Support Bot — Production LLM System
 
 Production-grade conversational support bot for Amazon Kindle devices, built to demonstrate end-to-end LLM system design — from query handling to eval-gated CI/CD.
 
