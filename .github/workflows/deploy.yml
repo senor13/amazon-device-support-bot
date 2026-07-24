@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - '**.md'
+      - 'terraform/**'
+      - '.github/workflows/eval-gate.yml'
   workflow_dispatch:
 
 permissions:
