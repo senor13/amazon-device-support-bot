@@ -10,7 +10,7 @@ Production-grade conversational support bot for Amazon Kindle devices, built to 
 
 **Observability:** LangSmith traces every LangGraph node. Structured JSON logging (structlog) with request_id correlation across all nodes. Per-response scores stored in Postgres for trend analysis.
 
-![Architecture](architecture-v2.png)
+![Architecture](architecture-v3.png)
 
 ---
 
